@@ -7,7 +7,7 @@ import android.content.pm.ShortcutInfo
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
+import android.view.ViewConfiguration
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateFloatAsState
@@ -15,9 +15,22 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -26,9 +39,30 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,8 +70,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
@@ -45,6 +80,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.arc.launcher.ui.theme.LauncherTheme
@@ -52,8 +89,6 @@ import com.google.accompanist.drawablepainter.rememberDrawablePainter
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
-import kotlin.math.abs
-import kotlin.math.atan2
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -81,6 +116,25 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private fun findTargetIndex(
+    finalPosition: Offset,
+    itemBounds: Map<Any, Rect>,
+    items: List<LauncherItem>
+): Int {
+    val closestItem = itemBounds.minByOrNull { (_, bounds) ->
+        sqrt((bounds.left - finalPosition.x).pow(2) + (bounds.top - finalPosition.y).pow(2))
+    }
+    return closestItem?.key?.let { key ->
+        items.indexOfFirst { item ->
+            val currentKey = when (item) {
+                is LauncherItem.App -> "app_${item.appInfo.packageName}"
+                is LauncherItem.Folder -> "folder_${item.folderInfo.id}"
+            }
+            currentKey == key
+        }
+    } ?: items.size
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun AppList(viewModel: LauncherViewModel = viewModel()) {
@@ -102,9 +156,46 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
     var dropTarget by remember { mutableStateOf<LauncherItem?>(null) }
     var draggedItemSize by remember { mutableStateOf(Size.Zero) }
-    var isLongPressHandled by remember { mutableStateOf(false) }
     val density = LocalDensity.current
+    var expandedFolderId by remember { mutableStateOf<String?>(null) }
 
+
+    val onFolderAppDrag = { change: PointerInputChange, dragAmount: Offset ->
+        change.consume()
+        dragOffset += dragAmount
+        val currentDragPosition = dragOffset + Offset(draggedItemSize.width / 2, draggedItemSize.height / 2)
+        val newDropTarget = itemBounds.entries.find { (key, bounds) ->
+            val draggedItemKey = "app_${(draggedItem as LauncherItem.App).appInfo.packageName}"
+            draggedItemKey != key && bounds.contains(currentDragPosition)
+        }?.key?.let { key ->
+            items.find { launcherItem ->
+                val currentKey = when (launcherItem) {
+                    is LauncherItem.App -> "app_${launcherItem.appInfo.packageName}"
+                    is LauncherItem.Folder -> "folder_${launcherItem.folderInfo.id}"
+                }
+                currentKey == key
+            }
+        }
+        if (newDropTarget != dropTarget) {
+            dropTarget = newDropTarget
+        }
+    }
+
+    val onFolderAppDragEnd = {
+        val (appToMove, fromFolder) = viewModel.draggedAppFromFolder!!
+        when (val target = dropTarget) {
+            is LauncherItem.App -> viewModel.moveAppFromFolderToApp(context, appToMove, fromFolder, target.appInfo)
+            is LauncherItem.Folder -> viewModel.moveAppBetweenFolders(context, appToMove, fromFolder, target.folderInfo)
+            null -> {
+                val targetIndex = findTargetIndex(dragOffset, itemBounds, items)
+                viewModel.moveAppFromFolderToHome(context, appToMove, fromFolder, targetIndex)
+            }
+        }
+        viewModel.endDragFromFolder()
+        draggedItem = null
+        dragOffset = Offset.Zero
+        dropTarget = null
+    }
 
     Box(
         modifier = Modifier
@@ -145,155 +236,6 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
                             itemBounds[itemKey] =
                                 Rect(coordinates.positionInRoot(), coordinates.size.toSize())
                         }
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onLongPress = {
-                                    if (item is LauncherItem.App) {
-                                        viewModel.showShortcuts(context, item.appInfo)
-                                        isLongPressHandled = true
-                                    }
-                                },
-                                onPress = {
-                                    awaitRelease()
-                                    if (!isLongPressHandled) {
-                                        if (item is LauncherItem.App) {
-                                            val launchIntent: Intent? =
-                                                context.packageManager.getLaunchIntentForPackage(
-                                                    item.appInfo.packageName
-                                                )
-                                            context.startActivity(launchIntent)
-                                        }
-                                    }
-                                    isLongPressHandled = false
-                                }
-                            )
-                        }
-                        .pointerInput(Unit) {
-                            var totalDragAmount = Offset.Zero
-                            detectDragGestures(
-                                onDragStart = {
-                                    totalDragAmount = Offset.Zero
-                                    if (isLongPressHandled) {
-                                        viewModel.hideShortcuts()
-                                        itemBounds[itemKey]?.let { bounds ->
-                                            draggedItem = item
-                                            dragOffset = bounds.topLeft
-                                            draggedItemSize = bounds.size
-                                            Log.d(
-                                                "DragDrop",
-                                                "onDragStart: draggedItem=$draggedItem"
-                                            )
-                                        }
-                                    }
-                                },
-                                onDrag = { change, dragAmount ->
-                                    if (draggedItem != null) {
-                                        Log.d("DragDrop", "onDrag: $dragAmount")
-                                        change.consume()
-                                        dragOffset += dragAmount
-
-                                        val currentDragPosition =
-                                            dragOffset + Offset(
-                                                draggedItemSize.width / 2,
-                                                draggedItemSize.height / 2
-                                            )
-                                        val newDropTarget = itemBounds.entries
-                                            .find { (key, bounds) ->
-                                                itemKey != key && bounds.contains(
-                                                    currentDragPosition
-                                                )
-                                            }
-                                            ?.key
-                                            ?.let { key ->
-                                                items.find { launcherItem ->
-                                                    val currentKey = when (launcherItem) {
-                                                        is LauncherItem.App -> "app_${launcherItem.appInfo.packageName}"
-                                                        is LauncherItem.Folder -> "folder_${launcherItem.folderInfo.id}"
-                                                    }
-                                                    currentKey == key
-                                                }
-                                            }
-                                        if (newDropTarget != dropTarget) {
-                                            Log.d(
-                                                "DragDrop",
-                                                "dropTarget changed from $dropTarget to $newDropTarget"
-                                            )
-                                            dropTarget = newDropTarget
-                                        }
-                                    } else if (!isLongPressHandled) {
-                                        totalDragAmount += dragAmount
-                                        change.consume()
-                                    }
-                                },
-                                onDragCancel = {
-                                    Log.d("DragDrop", "onDragCancel")
-                                    draggedItem = null
-                                    dragOffset = Offset.Zero
-                                    dropTarget = null
-                                },
-                                onDragEnd = {
-                                    Log.d(
-                                        "DragDrop",
-                                        "onDragEnd: draggedItem=$draggedItem, dropTarget=$dropTarget"
-                                    )
-                                    val currentDraggedItem = draggedItem
-                                    if (currentDraggedItem != null) {
-                                        dropTarget?.let { target ->
-                                            if (currentDraggedItem is LauncherItem.App) {
-                                                viewModel.createFolder(
-                                                    context,
-                                                    currentDraggedItem,
-                                                    target
-                                                )
-                                            }
-                                        } ?: run {
-                                            val finalPosition = dragOffset
-                                            Log.d("DragDrop", "finalPosition: $finalPosition")
-
-                                            val closestItem =
-                                                itemBounds.minByOrNull { (_, bounds) ->
-                                                    val dx =
-                                                        (bounds.left - finalPosition.x).pow(2)
-                                                    val dy = (bounds.top - finalPosition.y).pow(2)
-                                                    sqrt(dx + dy)
-                                                }
-                                            Log.d("DragDrop", "closestItem: $closestItem")
-
-                                            val targetIndex = closestItem?.key?.let { key ->
-                                                items.indexOfFirst { item ->
-                                                    val currentKey = when (item) {
-                                                        is LauncherItem.App -> "app_${item.appInfo.packageName}"
-                                                        is LauncherItem.Folder -> "folder_${item.folderInfo.id}"
-                                                    }
-                                                    currentKey == key
-                                                }
-                                            } ?: items.size
-                                            Log.d("DragDrop", "targetIndex: $targetIndex")
-                                            viewModel.moveItem(
-                                                context,
-                                                currentDraggedItem,
-                                                targetIndex
-                                            )
-                                        }
-                                    } else if (!isLongPressHandled) {
-                                        val swipeThreshold = with(density) { 48.dp.toPx() }
-                                        if (totalDragAmount.getDistance() > swipeThreshold) {
-                                            if (item is LauncherItem.App) {
-                                                val direction = getSwipeDirection(totalDragAmount)
-                                                Log.d("Gestures", "Swipe detected: $direction for ${item.appInfo.packageName}")
-                                                val config = viewModel.getGestureConfig(item.appInfo.packageName, direction)
-                                                config?.action?.let { action ->
-                                                    executeGestureAction(context, action)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    draggedItem = null
-                                    dragOffset = Offset.Zero
-                                    dropTarget = null
-                                }
-                            )
-                        }
                         .graphicsLayer {
                             alpha = if (isBeingDragged) 0f else 1f
                         }
@@ -301,12 +243,78 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
                     when (item) {
                         is LauncherItem.App -> AppItem(
                             appInfo = item.appInfo,
-                            viewModel = viewModel
+                            viewModel = viewModel,
+                            onDragStart = {
+                                viewModel.hideShortcuts()
+                                itemBounds[itemKey]?.let { bounds ->
+                                    draggedItem = item
+                                    dragOffset = bounds.topLeft
+                                    draggedItemSize = bounds.size
+                                }
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                dragOffset += dragAmount
+                                val currentDragPosition = dragOffset + Offset(
+                                    draggedItemSize.width / 2,
+                                    draggedItemSize.height / 2
+                                )
+                                val newDropTarget = itemBounds.entries.find { (key, bounds) ->
+                                    itemKey != key && bounds.contains(currentDragPosition)
+                                }?.key?.let { key ->
+                                    items.find { launcherItem ->
+                                        val currentKey = when (launcherItem) {
+                                            is LauncherItem.App -> "app_${launcherItem.appInfo.packageName}"
+                                            is LauncherItem.Folder -> "folder_${launcherItem.folderInfo.id}"
+                                        }
+                                        currentKey == key
+                                    }
+                                }
+                                if (newDropTarget != dropTarget) {
+                                    dropTarget = newDropTarget
+                                }
+                            },
+                            onDragEnd = {
+                                dropTarget?.let { target ->
+                                    if (draggedItem is LauncherItem.App) {
+                                        viewModel.createFolder(
+                                            context,
+                                            draggedItem as LauncherItem.App,
+                                            target
+                                        )
+                                    }
+                                } ?: run {
+                                    val targetIndex =
+                                        findTargetIndex(dragOffset, itemBounds, items)
+                                    viewModel.moveItem(context, draggedItem!!, targetIndex)
+                                }
+                                draggedItem = null
+                                dragOffset = Offset.Zero
+                                dropTarget = null
+                            },
+                            onDragCancel = {
+                                draggedItem = null
+                                dragOffset = Offset.Zero
+                                dropTarget = null
+                            }
                         )
 
                         is LauncherItem.Folder -> FolderItem(
                             folderInfo = item.folderInfo,
-                            viewModel = viewModel
+                            viewModel = viewModel,
+                            isExpanded = expandedFolderId == item.folderInfo.id,
+                            onExpandRequest = {
+                                expandedFolderId = if (it) item.folderInfo.id else null
+                            },
+                            onAppDragStart = { appInfo, folderInfo, offset, size ->
+                                viewModel.startDragFromFolder(appInfo, folderInfo)
+                                draggedItem = LauncherItem.App(appInfo)
+                                dragOffset = offset
+                                draggedItemSize = size
+                            },
+                            onAppDrag = onFolderAppDrag,
+                            onAppDragEnd = onFolderAppDragEnd,
+                            onAppDragCancel = onFolderAppDragEnd
                         )
                     }
                 }
@@ -327,13 +335,19 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
                 when (val item = draggedItem) {
                     is LauncherItem.App -> AppItem(
                         appInfo = item.appInfo,
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        isGhost = true
                     )
                     is LauncherItem.Folder -> FolderItem(
                         folderInfo = item.folderInfo,
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        isExpanded = false,
+                        onExpandRequest = {},
+                        onAppDragStart = { _, _, _, _ -> },
+                        onAppDrag = { _, _ -> },
+                        onAppDragEnd = {},
+                        onAppDragCancel = {}
                     )
-
                     null -> {}
                 }
             }
@@ -346,7 +360,6 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
                 },
                 sheetState = sheetState
             ) {
-                // Sheet content
                 Button(onClick = {
                     scope.launch { sheetState.hide() }.invokeOnCompletion {
                         if (!sheetState.isVisible) {
@@ -368,52 +381,15 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
             }
         }
 
-        appToShowGestureConfig?.let { appInfo ->
+        appToShowGestureConfig?.let { (appInfo, folderInfo, indexInFolder) ->
             GestureConfigDialog(
                 appInfo = appInfo,
+                folderInfo = folderInfo,
+                indexInFolder = indexInFolder,
                 onDismiss = { viewModel.hideGestureConfig() },
                 viewModel = viewModel
             )
         }
-    }
-}
-
-fun executeGestureAction(context: Context, action: GestureAction) {
-    when (action) {
-        is GestureAction.LaunchApp -> {
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(action.packageName)
-            context.startActivity(launchIntent)
-        }
-        is GestureAction.LaunchShortcut -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-                val launcherApps =
-                    context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
-                val shortcutQuery = LauncherApps.ShortcutQuery()
-                    .setPackage(action.packageName)
-                    .setShortcutIds(listOf(action.shortcutId))
-                val shortcuts =
-                    launcherApps.getShortcuts(shortcutQuery, android.os.Process.myUserHandle())
-                if (shortcuts != null && shortcuts.isNotEmpty()) {
-                    launcherApps.startShortcut(shortcuts[0], null, null)
-                }
-            }
-        }
-    }
-}
-
-fun getSwipeDirection(dragAmount: Offset): GestureDirection {
-    val (dx, dy) = dragAmount
-    val angle = atan2(dy.toDouble(), dx.toDouble()) * (180 / Math.PI)
-    return when {
-        angle > -22.5 && angle <= 22.5 -> GestureDirection.RIGHT
-        angle > 22.5 && angle <= 67.5 -> GestureDirection.DOWN_RIGHT
-        angle > 67.5 && angle <= 112.5 -> GestureDirection.DOWN
-        angle > 112.5 && angle <= 157.5 -> GestureDirection.DOWN_LEFT
-        angle > 157.5 || angle <= -157.5 -> GestureDirection.LEFT
-        angle > -157.5 && angle <= -112.5 -> GestureDirection.UP_LEFT
-        angle > -112.5 && angle <= -67.5 -> GestureDirection.UP
-        angle > -67.5 && angle <= -22.5 -> GestureDirection.UP_RIGHT
-        else -> GestureDirection.UP // Default to UP
     }
 }
 
@@ -422,14 +398,53 @@ fun getSwipeDirection(dragAmount: Offset): GestureDirection {
 fun AppItem(
     appInfo: AppInfo,
     viewModel: LauncherViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    folderInfo: FolderInfo? = null,
+    indexInFolder: Int? = null,
+    isGhost: Boolean = false,
+    onDragStart: (() -> Unit)? = null,
+    onDrag: ((change: PointerInputChange, dragAmount: Offset) -> Unit)? = null,
+    onDragEnd: (() -> Unit)? = null,
+    onDragCancel: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val showShortcutsMenu = viewModel.showShortcutsMenu == appInfo
+    val showShortcutsMenu = viewModel.showShortcutsMenu == appInfo && !isGhost
     val shortcuts = viewModel.shortcuts
+    val density = LocalDensity.current
+
+    val gestureModifier = if (onDragStart != null && onDrag != null && onDragEnd != null && onDragCancel != null) {
+        Modifier.unifiedGestureDetector(
+            onTap = {
+                val launchIntent: Intent? =
+                    context.packageManager.getLaunchIntentForPackage(appInfo.packageName)
+                context.startActivity(launchIntent)
+            },
+            onDoubleTap = {},
+            onLongPress = { viewModel.showShortcuts(context, appInfo) },
+            onSwipe = { direction ->
+                val key = if (folderInfo != null && indexInFolder != null) {
+                    "folder:${folderInfo.id}:$indexInFolder:${direction.name}"
+                } else {
+                    "app:${appInfo.packageName}:${direction.name}"
+                }
+                val config = viewModel.getGestureConfig(key)
+                config?.action?.let { action ->
+                    viewModel.executeGestureAction(context, action)
+                }
+            },
+            onDragStart = onDragStart,
+            onDrag = onDrag,
+            onDragEnd = onDragEnd,
+            onDragCancel = onDragCancel,
+            swipeThreshold = with(density) { 48.dp.toPx() },
+            doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong()
+        )
+    } else {
+        Modifier
+    }
 
     Box(
-        modifier = modifier
+        modifier = modifier.then(gestureModifier)
     ) {
         Column(
             modifier = Modifier
@@ -451,49 +466,51 @@ fun AppItem(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        DropdownMenu(
-            expanded = showShortcutsMenu,
-            onDismissRequest = { viewModel.hideShortcuts() }
-        ) {
-            DropdownMenuItem(
-                text = { Text("Gestures") },
-                onClick = {
-                    viewModel.showGestureConfig(appInfo)
-                    viewModel.hideShortcuts()
-                }
-            )
-            if (shortcuts.isEmpty()) {
+        if (!isGhost) {
+            DropdownMenu(
+                expanded = showShortcutsMenu,
+                onDismissRequest = { viewModel.hideShortcuts() }
+            ) {
                 DropdownMenuItem(
-                    text = { Text("No shortcuts available") },
-                    onClick = { viewModel.hideShortcuts() }
+                    text = { Text("Gestures") },
+                    onClick = {
+                        viewModel.showGestureConfig(appInfo, folderInfo, indexInFolder)
+                        viewModel.hideShortcuts()
+                    }
                 )
-            } else {
-                shortcuts.forEach { shortcut ->
+                if (shortcuts.isEmpty()) {
                     DropdownMenuItem(
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                shortcut.icon?.let { icon ->
-                                    Image(
-                                        painter = rememberDrawablePainter(drawable = icon),
-                                        contentDescription = shortcut.label,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                 }
-                                Text(text = shortcut.label)
-                            }
-                        },
-                        onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-                                val launcherApps =
-                                    context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
-                                shortcut.info?.let {
-                                    launcherApps.startShortcut(it, null, null)
-                                }
-                            }
-                            viewModel.hideShortcuts()
-                        }
+                        text = { Text("No shortcuts available") },
+                        onClick = { viewModel.hideShortcuts() }
                     )
+                } else {
+                    shortcuts.forEach { shortcut ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    shortcut.icon?.let { icon ->
+                                        Image(
+                                            painter = rememberDrawablePainter(drawable = icon),
+                                            contentDescription = shortcut.label,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
+                                    Text(text = shortcut.label)
+                                }
+                            },
+                            onClick = {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+                                    val launcherApps =
+                                        context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+                                    shortcut.info?.let {
+                                        launcherApps.startShortcut(it, null, null)
+                                    }
+                                }
+                                viewModel.hideShortcuts()
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -504,53 +521,180 @@ fun AppItem(
 fun FolderItem(
     folderInfo: FolderInfo,
     viewModel: LauncherViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isExpanded: Boolean,
+    onExpandRequest: (Boolean) -> Unit,
+    onAppDragStart: (AppInfo, FolderInfo, Offset, Size) -> Unit,
+    onAppDrag: (PointerInputChange, Offset) -> Unit,
+    onAppDragEnd: () -> Unit,
+    onAppDragCancel: () -> Unit
 ) {
-    var showFolderDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val showFolderMenu = viewModel.showFolderMenu == folderInfo.id
 
-    Box(modifier) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-                .combinedClickable(
-                    onClick = { showFolderDialog = true },
-                    onLongClick = { /* Handle long click for folder */ }
-                ),
-            horizontalAlignment = Alignment.CenterHorizontally
+    key(folderInfo) {
+        Box(
+            modifier = modifier.unifiedGestureDetector(
+                onTap = {
+                    onExpandRequest(true)
+                },
+                onDoubleTap = {
+                    viewModel.performFolderGesture(
+                        context,
+                        folderInfo,
+                        GestureDirection.DOUBLE_TAP
+                    )
+                },
+                onLongPress = { viewModel.showFolderMenu(folderInfo) },
+                onSwipe = { direction ->
+                    viewModel.performFolderGesture(context, folderInfo, direction)
+                },
+                onDragStart = { },
+                onDrag = { _, _ -> },
+                onDragEnd = { },
+                onDragCancel = { },
+                swipeThreshold = with(density) { 48.dp.toPx() },
+                doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong()
+            )
         ) {
-            folderInfo.apps.firstOrNull()?.icon?.let {
-                Image(
-                    painter = rememberDrawablePainter(drawable = it),
-                    contentDescription = folderInfo.name,
-                    modifier = Modifier.size(64.dp)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .padding(4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier.fillMaxSize(),
+                        userScrollEnabled = false
+                    ) {
+                        items(folderInfo.apps.take(9)) { app ->
+                            app.icon?.let {
+                                Image(
+                                    painter = rememberDrawablePainter(drawable = it),
+                                    contentDescription = app.label,
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .padding(1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = folderInfo.name,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = folderInfo.name,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            DropdownMenu(
+                expanded = showFolderMenu,
+                onDismissRequest = { viewModel.hideFolderMenu() }
+            ) {
+                if (folderInfo.gestureMode == GestureMode.CUSTOM) {
+                    DropdownMenuItem(
+                        text = { Text("Gestures") },
+                        onClick = {
+                            viewModel.showGestureConfig(
+                                AppInfo(folderInfo.name, ""),
+                                folderInfo,
+                                null
+                            )
+                            viewModel.hideFolderMenu()
+                        }
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text(if (folderInfo.gestureMode == GestureMode.DEFAULT) "Switch to Custom" else "Switch to Default") },
+                    onClick = {
+                        viewModel.toggleGestureMode(context, folderInfo)
+                        viewModel.hideFolderMenu()
+                    }
+                )
+            }
         }
     }
 
-    if (showFolderDialog) {
-        AlertDialog(
-            onDismissRequest = { showFolderDialog = false },
-            title = { Text(folderInfo.name) },
-            text = {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 128.dp),
+    if (isExpanded) {
+        Dialog(
+            onDismissRequest = { onExpandRequest(false) },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            content = {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = Color.Black.copy(alpha = 0.5f)
                 ) {
-                    items(folderInfo.apps) { app ->
-                        AppItem(appInfo = app, viewModel = viewModel)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                onExpandRequest(false)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth(0.8f)
+                                .padding(16.dp)
+                        ) {
+                            Column {
+                                Text(
+                                    folderInfo.name,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    modifier = Modifier.padding(16.dp)
+                                )
+                                LazyVerticalGrid(
+                                    columns = GridCells.Adaptive(minSize = 96.dp),
+                                    contentPadding = PaddingValues(16.dp)
+                                ) {
+                                    items(folderInfo.apps.size) { index ->
+                                        val app = folderInfo.apps[index]
+                                        var position by remember { mutableStateOf(Offset.Zero) }
+                                        var size by remember { mutableStateOf(Size.Zero) }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .onGloballyPositioned {
+                                                    position = it.positionInRoot()
+                                                    size = it.size.toSize()
+                                                }
+                                        ) {
+                                            AppItem(
+                                                appInfo = app,
+                                                viewModel = viewModel,
+                                                folderInfo = folderInfo,
+                                                indexInFolder = index,
+                                                onDragStart = {
+                                                    viewModel.hideShortcuts()
+                                                    onExpandRequest(false)
+                                                    onAppDragStart(
+                                                        app,
+                                                        folderInfo,
+                                                        position,
+                                                        size
+                                                    )
+                                                },
+                                                onDrag = onAppDrag,
+                                                onDragEnd = onAppDragEnd,
+                                                onDragCancel = onAppDragCancel
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showFolderDialog = false }) {
-                    Text("Close")
                 }
             }
         )
@@ -610,6 +754,8 @@ fun AssignedAction(
 @Composable
 fun GestureConfigDialog(
     appInfo: AppInfo,
+    folderInfo: FolderInfo?,
+    indexInFolder: Int?,
     onDismiss: () -> Unit,
     viewModel: LauncherViewModel
 ) {
@@ -624,8 +770,15 @@ fun GestureConfigDialog(
             title = { Text("Configure Gestures for ${appInfo.label}") },
             text = {
                 LazyColumn {
-                    items(GestureDirection.values()) { gesture ->
-                        val config = viewModel.getGestureConfig(appInfo.packageName, gesture)
+                    items(GestureDirection.values().filter { it != GestureDirection.SINGLE_TAP }) { gesture ->
+                        val key = if (folderInfo != null && indexInFolder != null) {
+                            "folder:${folderInfo.id}:$indexInFolder:${gesture.name}"
+                        } else if (folderInfo != null) {
+                            "folder:${folderInfo.id}:${gesture.name}"
+                        } else {
+                            "app:${appInfo.packageName}:${gesture.name}"
+                        }
+                        val config = viewModel.getGestureConfig(key)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -657,8 +810,15 @@ fun GestureConfigDialog(
     } else {
         ActionChooserDialog(
             viewModel = viewModel,
-            onActionSelected = { action ->
-                viewModel.setGestureConfig(appInfo.packageName, showActionChooser!!, action)
+            onActionSelected = { action, selectedApp ->
+                val key = if (folderInfo != null && indexInFolder != null) {
+                    "folder:${folderInfo.id}:$indexInFolder:${showActionChooser!!.name}"
+                } else if (folderInfo != null) {
+                    "folder:${folderInfo.id}:${showActionChooser!!.name}"
+                } else {
+                    "app:${appInfo.packageName}:${showActionChooser!!.name}"
+                }
+                viewModel.setGestureConfig(key, selectedApp.packageName, showActionChooser!!, action)
                 showActionChooser = null
             },
             onDismiss = { showActionChooser = null }
@@ -669,7 +829,7 @@ fun GestureConfigDialog(
 @Composable
 fun ActionChooserDialog(
     viewModel: LauncherViewModel,
-    onActionSelected: (GestureAction) -> Unit,
+    onActionSelected: (GestureAction, AppInfo) -> Unit,
     onDismiss: () -> Unit
 ) {
     val allApps by viewModel.allApps.collectAsState()
@@ -688,7 +848,7 @@ fun ActionChooserDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    onActionSelected(GestureAction.LaunchApp(app.packageName))
+                                    onActionSelected(GestureAction.LaunchApp(app.packageName), app)
                                 }
                                 .padding(8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -722,7 +882,8 @@ fun ActionChooserDialog(
                                                     GestureAction.LaunchShortcut(
                                                         app.packageName,
                                                         it.id
-                                                    )
+                                                    ),
+                                                    app
                                                 )
                                             }
                                         }
