@@ -73,6 +73,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
@@ -444,19 +445,31 @@ fun AppItem(
     }
 
     Box(
-        modifier = modifier.then(gestureModifier)
+        modifier = modifier
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp),
+                .padding(8.dp)
+                .pointerInput(Unit) {},
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            appInfo.icon?.let {
-                Image(
-                    painter = rememberDrawablePainter(drawable = it),
-                    contentDescription = appInfo.label,
-                    modifier = Modifier.size(64.dp)
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+            ) {
+                appInfo.icon?.let {
+                    Image(
+                        painter = rememberDrawablePainter(drawable = it),
+                        contentDescription = appInfo.label,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Spacer(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .scale(0.9f)
+                        .then(gestureModifier)
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
@@ -535,33 +548,13 @@ fun FolderItem(
 
     key(folderInfo) {
         Box(
-            modifier = modifier.unifiedGestureDetector(
-                onTap = {
-                    onExpandRequest(true)
-                },
-                onDoubleTap = {
-                    viewModel.performFolderGesture(
-                        context,
-                        folderInfo,
-                        GestureDirection.DOUBLE_TAP
-                    )
-                },
-                onLongPress = { viewModel.showFolderMenu(folderInfo) },
-                onSwipe = { direction ->
-                    viewModel.performFolderGesture(context, folderInfo, direction)
-                },
-                onDragStart = { },
-                onDrag = { _, _ -> },
-                onDragEnd = { },
-                onDragCancel = { },
-                swipeThreshold = with(density) { 48.dp.toPx() },
-                doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong()
-            )
+            modifier = modifier
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
+                    .padding(8.dp)
+                    .pointerInput(Unit) {},
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
@@ -570,20 +563,45 @@ fun FolderItem(
                         .padding(4.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(3),
-                        modifier = Modifier.fillMaxSize(),
-                        userScrollEnabled = false
-                    ) {
-                        items(folderInfo.apps.take(9)) { app ->
-                            app.icon?.let {
-                                Image(
-                                    painter = rememberDrawablePainter(drawable = it),
-                                    contentDescription = app.label,
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .padding(1.dp)
+                    Box(
+                        modifier = Modifier.unifiedGestureDetector(
+                            onTap = {
+                                onExpandRequest(true)
+                            },
+                            onDoubleTap = {
+                                viewModel.performFolderGesture(
+                                    context,
+                                    folderInfo,
+                                    GestureDirection.DOUBLE_TAP
                                 )
+                            },
+                            onLongPress = { viewModel.showFolderMenu(folderInfo) },
+                            onSwipe = { direction ->
+                                viewModel.performFolderGesture(context, folderInfo, direction)
+                            },
+                            onDragStart = { },
+                            onDrag = { _, _ -> },
+                            onDragEnd = { },
+                            onDragCancel = { },
+                            swipeThreshold = with(density) { 48.dp.toPx() },
+                            doubleTapTimeout = ViewConfiguration.getDoubleTapTimeout().toLong()
+                        )
+                    ) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            modifier = Modifier.fillMaxSize(),
+                            userScrollEnabled = false
+                        ) {
+                            items(folderInfo.apps.take(9)) { app ->
+                                app.icon?.let {
+                                    Image(
+                                        painter = rememberDrawablePainter(drawable = it),
+                                        contentDescription = app.label,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .padding(1.dp)
+                                    )
+                                }
                             }
                         }
                     }
