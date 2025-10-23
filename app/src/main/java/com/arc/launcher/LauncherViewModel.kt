@@ -217,7 +217,8 @@ class LauncherViewModel : ViewModel() {
                     })
                 }
             } catch (e: SecurityException) {
-                // Handle exception
+                showShortcutsMenu = appInfo
+                return false
             }
         }
         showShortcutsMenu = appInfo

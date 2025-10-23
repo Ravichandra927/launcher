@@ -1,5 +1,6 @@
 package com.arc.launcher
 
+import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.LauncherApps
@@ -93,6 +94,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlin.math.pow
 import kotlin.math.sqrt
+
+private fun isDefaultLauncher(context: Context): Boolean {
+    val roleManager = context.getSystemService(RoleManager::class.java)
+    return roleManager.isRoleHeld(RoleManager.ROLE_HOME)
+}
 
 @Serializable
 data class AppInfo(
@@ -518,6 +524,7 @@ fun AppItem(
     val shortcuts = viewModel.shortcuts
     val density = LocalDensity.current
     val hasGestures = viewModel.hasCustomGestures(appInfo, folderInfo, indexInFolder)
+    var hasShortcutPermission by remember { mutableStateOf(true) }
 
     val gestureModifier = if (onDragStart != null && onDrag != null && onDragEnd != null && onDragCancel != null) {
         Modifier.unifiedGestureDetector(
@@ -541,7 +548,8 @@ fun AppItem(
             },
             onLongPress = {
                 onLongPressHandled()
-                viewModel.showShortcuts(context, appInfo)
+                hasShortcutPermission = viewModel.showShortcuts(context, appInfo)
+				true
             },
             onSwipe = { direction ->
                 val key = if (folderInfo != null && indexInFolder != null) {
@@ -629,12 +637,16 @@ fun AppItem(
                         viewModel.hideShortcuts()
                     }
                 )
-                if (shortcuts.isEmpty()) {
+                if (!hasShortcutPermission) {
                     DropdownMenuItem(
-                        text = { Text("No shortcuts available") },
-                        onClick = { viewModel.hideShortcuts() }
+                        text = { Text("Set as default to view shortcuts") },
+                        onClick = {
+                            val intent = Intent(android.provider.Settings.ACTION_HOME_SETTINGS)
+                            context.startActivity(intent)
+                            viewModel.hideShortcuts()
+                        }
                     )
-                } else {
+                } else if (shortcuts.isNotEmpty()) {
                     shortcuts.forEach { shortcut ->
                         DropdownMenuItem(
                             text = {
@@ -713,7 +725,7 @@ fun FolderItem(
                             },
                             onLongPress = {
                                 onLongPressHandled()
-                                return@unifiedGestureDetector viewModel.showFolderMenu(folderInfo)
+                                viewModel.showFolderMenu(folderInfo)
                             },
                             onSwipe = { direction ->
                                 return@unifiedGestureDetector viewModel.performFolderGesture(
