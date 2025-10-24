@@ -89,7 +89,7 @@ class LauncherViewModel : ViewModel() {
                 _allApps.value = allAppInfo
 
                 loadItems(context, allAppInfo)
-                loadGestureConfigs(context)
+                refreshGestureConfigs(context) // Call refresh here to ensure gestures are loaded
                 loadAllShortcuts(context, allAppInfo)
             }
         }
@@ -267,13 +267,15 @@ class LauncherViewModel : ViewModel() {
         showGestureConfig = null
     }
 
-    private fun loadGestureConfigs(context: Context) {
+    private fun refreshGestureConfigs(context: Context) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 val file = File(context.filesDir, "gestures.json")
                 if (file.exists()) {
                     val jsonText = file.readText()
                     gestureConfigs = json.decodeFromString<MutableMap<String, GestureConfig>>(jsonText)
+                } else {
+                    gestureConfigs = mutableMapOf() // Initialize if file doesn't exist
                 }
             }
         }
@@ -284,6 +286,7 @@ class LauncherViewModel : ViewModel() {
             withContext(Dispatchers.IO) {
                 val jsonText = json.encodeToString(gestureConfigs)
                 File(context.filesDir, "gestures.json").writeText(jsonText)
+                refreshGestureConfigs(context) // Refresh after saving to ensure consistency
             }
         }
     }
@@ -435,6 +438,7 @@ class LauncherViewModel : ViewModel() {
                     GestureDirection.UP_RIGHT -> folderInfo.apps.getOrNull(1)
                     GestureDirection.DOWN_LEFT -> folderInfo.apps.getOrNull(2)
                     GestureDirection.DOWN_RIGHT -> folderInfo.apps.getOrNull(3)
+                    GestureDirection.DOUBLE_TAP -> null // Explicitly do nothing for double tap in default mode if <= 4 apps
                     else -> null
                 }
             } else {

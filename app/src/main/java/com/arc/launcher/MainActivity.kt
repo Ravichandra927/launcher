@@ -547,7 +547,8 @@ fun AppItem(
             onSwipe = { direction ->
                 val key = if (folderInfo != null && indexInFolder != null) {
                     "folder:${folderInfo.id}:$indexInFolder:${direction.name}"
-                } else {
+                }
+                else {
                     "app:${appInfo.packageName}:${direction.name}"
                 }
                 val config = viewModel.getGestureConfig(key)
