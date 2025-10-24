@@ -1,12 +1,10 @@
 package com.arc.launcher
 
-import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.LauncherApps
 import android.content.pm.ShortcutInfo
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.os.Bundle
 import android.view.ViewConfiguration
 import androidx.activity.ComponentActivity
@@ -94,11 +92,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlin.math.pow
 import kotlin.math.sqrt
-
-private fun isDefaultLauncher(context: Context): Boolean {
-    val roleManager = context.getSystemService(RoleManager::class.java)
-    return roleManager.isRoleHeld(RoleManager.ROLE_HOME)
-}
 
 @Serializable
 data class AppInfo(
@@ -207,12 +200,10 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
             draggedItemKey != key && bounds.contains(currentDragPosition)
         }?.key?.let { key ->
             items.find { launcherItem ->
-                val currentKey = when (launcherItem) {
+                when (launcherItem) {
                     is LauncherItem.App -> "app_${launcherItem.appInfo.packageName}"
                     is LauncherItem.Folder -> "folder_${launcherItem.folderInfo.id}"
-                    null -> "" // Explicitly handle null case for launcherItem
-                }
-                currentKey == key
+                } == key
             }
         }
         if (newDropTarget != dropTarget) {
@@ -272,12 +263,10 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
             itemKey != key && bounds.contains(currentDragPosition)
         }?.key?.let { key ->
             items.find { launcherItem ->
-                val currentKey = when (launcherItem) {
+                when (launcherItem) {
                     is LauncherItem.App -> "app_${launcherItem.appInfo.packageName}"
                     is LauncherItem.Folder -> "folder_${launcherItem.folderInfo.id}"
-                    null -> "" // Explicitly handle null case for launcherItem
-                }
-                currentKey == key
+                } == key
             }
         }
         if (newDropTarget != dropTarget) {
@@ -544,7 +533,7 @@ fun AppItem(
                     viewModel.executeGestureAction(context, action)
                     return@unifiedGestureDetector true
                 }
-                return@unifiedGestureDetector viewModel.hasCustomGestures(appInfo, folderInfo, indexInFolder)
+                return@unifiedGestureDetector false
             },
             onLongPress = {
                 onLongPressHandled()
@@ -562,7 +551,7 @@ fun AppItem(
                     viewModel.executeGestureAction(context, action)
                     return@unifiedGestureDetector true
                 }
-                return@unifiedGestureDetector viewModel.hasCustomGestures(appInfo, folderInfo, indexInFolder)
+                return@unifiedGestureDetector false
             },
             onDragStart = onDragStart,
             onDrag = onDrag,
@@ -1078,7 +1067,7 @@ fun GestureConfigDialog(
                 } else {
                     "app:${appInfo.packageName}:${showActionChooser!!.name}"
                 }
-                viewModel.setGestureConfig(key, selectedApp.packageName, showActionChooser!!, action)
+                viewModel.setGestureConfig(key, showActionChooser!!, action)
                 showActionChooser = null
             },
             onDismiss = { showActionChooser = null }

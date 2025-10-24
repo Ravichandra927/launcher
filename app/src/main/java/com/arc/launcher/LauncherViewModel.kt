@@ -24,6 +24,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNames
 import java.io.File
 import java.util.UUID
 
@@ -46,6 +47,8 @@ data class FolderInfo(
 )
 
 class LauncherViewModel : ViewModel() {
+    private val json = Json { ignoreUnknownKeys = true }
+
     private val _items = MutableStateFlow<List<LauncherItem>>(emptyList())
     val items: StateFlow<List<LauncherItem>> = _items.asStateFlow()
 
@@ -95,8 +98,8 @@ class LauncherViewModel : ViewModel() {
     private fun loadItems(context: Context, allAppInfo: List<AppInfo>) {
         val file = File(context.filesDir, "items.json")
         if (file.exists()) {
-            val json = file.readText()
-            val loadedItems = Json.decodeFromString<List<LauncherItemSerializable>>(json)
+            val jsonText = file.readText()
+            val loadedItems = json.decodeFromString<ItemsWrapper>(jsonText).items
             _items.value = loadedItems.mapNotNull { item ->
                 when (item.type) {
                     "app" -> allAppInfo.find { it.packageName == item.packageName }
@@ -145,8 +148,9 @@ class LauncherViewModel : ViewModel() {
                         )
                     }
                 }
-                val json = Json.encodeToString(serializableItems)
-                File(context.filesDir, "items.json").writeText(json)
+                val wrapper = ItemsWrapper(serializableItems)
+                val jsonText = json.encodeToString(wrapper)
+                File(context.filesDir, "items.json").writeText(jsonText)
             }
         }
     }
@@ -268,8 +272,8 @@ class LauncherViewModel : ViewModel() {
             withContext(Dispatchers.IO) {
                 val file = File(context.filesDir, "gestures.json")
                 if (file.exists()) {
-                    val json = file.readText()
-                    gestureConfigs = Json.decodeFromString<MutableMap<String, GestureConfig>>(json)
+                    val jsonText = file.readText()
+                    gestureConfigs = json.decodeFromString<MutableMap<String, GestureConfig>>(jsonText)
                 }
             }
         }
@@ -278,8 +282,8 @@ class LauncherViewModel : ViewModel() {
     fun saveGestureConfigs(context: Context) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                val json = Json.encodeToString(gestureConfigs)
-                File(context.filesDir, "gestures.json").writeText(json)
+                val jsonText = json.encodeToString(gestureConfigs)
+                File(context.filesDir, "gestures.json").writeText(jsonText)
             }
         }
     }
@@ -288,8 +292,8 @@ class LauncherViewModel : ViewModel() {
         return gestureConfigs[key]
     }
 
-    fun setGestureConfig(key: String, packageName: String, gesture: GestureDirection, action: GestureAction) {
-        gestureConfigs[key] = GestureConfig(packageName, gesture, action)
+    fun setGestureConfig(key: String, gesture: GestureDirection, action: GestureAction) {
+        gestureConfigs[key] = GestureConfig(gesture, action)
     }
 
     private fun loadAllShortcuts(context: Context, allApps: List<AppInfo>) {
@@ -491,6 +495,11 @@ class LauncherViewModel : ViewModel() {
                     val shortcutQuery = LauncherApps.ShortcutQuery()
                         .setPackage(action.packageName)
                         .setShortcutIds(listOf(action.shortcutId))
+                        .setQueryFlags(
+                            LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC
+                                    or LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST
+                                    or LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
+                        )
                     val shortcuts =
                         launcherApps.getShortcuts(shortcutQuery, android.os.Process.myUserHandle())
                     if (shortcuts != null && shortcuts.isNotEmpty()) {
@@ -507,7 +516,11 @@ class LauncherViewModel : ViewModel() {
         val packageName: String? = null,
         val id: String? = null,
         val name: String? = null,
+        @JsonNames("appPackages")
         val apps: List<String>? = null,
         val gestureMode: GestureMode? = null
     )
+
+    @Serializable
+    private data class ItemsWrapper(val items: List<LauncherItemSerializable>)
 }
