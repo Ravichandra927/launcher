@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as lazyGridItems // Alias for LazyVerticalGrid items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -53,6 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -772,23 +774,14 @@ fun FolderItem(
                 expanded = showFolderMenu,
                 onDismissRequest = { viewModel.hideFolderMenu() }
             ) {
-                if (folderInfo.gestureMode == GestureMode.CUSTOM) {
-                    DropdownMenuItem(
-                        text = { Text("Gestures") },
-                        onClick = {
-                            viewModel.showGestureConfig(
-                                AppInfo(folderInfo.name, ""),
-                                folderInfo,
-                                null
-                            )
-                            viewModel.hideFolderMenu()
-                        }
-                    )
-                }
                 DropdownMenuItem(
-                    text = { Text(if (folderInfo.gestureMode == GestureMode.DEFAULT) "Switch to Custom" else "Switch to Default") },
+                    text = { Text("Gestures") },
                     onClick = {
-                        viewModel.toggleGestureMode(context, folderInfo)
+                        viewModel.showGestureConfig(
+                            AppInfo(folderInfo.name, ""),
+                            folderInfo,
+                            null
+                        )
                         viewModel.hideFolderMenu()
                     }
                 )
@@ -1025,35 +1018,91 @@ fun GestureConfigDialog(
     val allApps by viewModel.allApps.collectAsState()
     val allShortcuts by viewModel.allShortcuts.collectAsState()
 
+    val isFolderGestureConfig = folderInfo != null && indexInFolder == null
+
+    var selectedMode by remember(folderInfo?.gestureMode) {
+        mutableStateOf(folderInfo?.gestureMode ?: GestureMode.CUSTOM)
+    }
+
     if (showActionChooser == null) {
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("Configure Gestures for ${appInfo.label}") },
             text = {
-                LazyColumn {
-                    items(items = GestureDirection.entries.filter { it != GestureDirection.SINGLE_TAP }.toList(), key = { it.name }) { gesture ->
-                        val key = if (folderInfo != null && indexInFolder != null) {
-                            "folder:${folderInfo.id}:$indexInFolder:${gesture.name}"
-                        } else if (folderInfo != null) {
-                            "folder:${folderInfo.id}:${gesture.name}"
-                        } else {
-                            "app:${appInfo.packageName}:${gesture.name}"
-                        }
-                        val config = viewModel.getGestureConfig(key)
+                Column {
+                    if (isFolderGestureConfig) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(gesture.description)
-                            Button(onClick = { showActionChooser = gesture }) {
-                                AssignedAction(
-                                    action = config?.action,
-                                    allApps = allApps,
-                                    allShortcuts = allShortcuts
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .selectable(
+                                        selected = (selectedMode == GestureMode.DEFAULT),
+                                        onClick = { selectedMode = GestureMode.DEFAULT }
+                                    )
+                                    .padding(horizontal = 8.dp)
+                            ) {
+                                RadioButton(
+                                    selected = (selectedMode == GestureMode.DEFAULT),
+                                    onClick = { selectedMode = GestureMode.DEFAULT }
                                 )
+                                Text("Default")
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .selectable(
+                                        selected = (selectedMode == GestureMode.CUSTOM),
+                                        onClick = { selectedMode = GestureMode.CUSTOM }
+                                    )
+                                    .padding(horizontal = 8.dp)
+                            ) {
+                                RadioButton(
+                                    selected = (selectedMode == GestureMode.CUSTOM),
+                                    onClick = { selectedMode = GestureMode.CUSTOM }
+                                )
+                                Text("Custom")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+
+                    if (isFolderGestureConfig && selectedMode == GestureMode.DEFAULT) {
+                        Text(
+                            "Default gestures launch apps based on their position:\n\n" +
+                                    "For folders with 4 or fewer apps, gestures correspond to the corners (e.g., Swipe Up-Left for the top-left app).\n\n" +
+                                    "For folders with 5 or more apps, gestures map to a 3x3 grid (e.g., Swipe Up for the top-middle app, Double Tap for the center)."
+                        )
+                    } else {
+                        LazyColumn {
+                            items(items = GestureDirection.entries.filter { it != GestureDirection.SINGLE_TAP }.toList(), key = { it.name }) { gesture ->
+                                val key = if (folderInfo != null && indexInFolder != null) {
+                                    "folder:${folderInfo.id}:$indexInFolder:${gesture.name}"
+                                } else if (folderInfo != null) {
+                                    "folder:${folderInfo.id}:${gesture.name}"
+                                } else {
+                                    "app:${appInfo.packageName}:${gesture.name}"
+                                }
+                                val config = viewModel.getGestureConfig(key)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(gesture.description)
+                                    Button(onClick = { showActionChooser = gesture }) {
+                                        AssignedAction(
+                                            action = config?.action,
+                                            allApps = allApps,
+                                            allShortcuts = allShortcuts
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1061,17 +1110,25 @@ fun GestureConfigDialog(
             },
             confirmButton = {
                 TextButton(onClick = {
+                    if (isFolderGestureConfig && folderInfo != null && selectedMode != folderInfo.gestureMode) {
+                        viewModel.toggleGestureMode(context, folderInfo)
+                    }
                     viewModel.saveGestureConfigs(context)
                     onDismiss()
                 }) {
                     Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
                 }
             }
         )
     } else {
         ActionChooserDialog(
             viewModel = viewModel,
-            onActionSelected = { action, selectedApp ->
+            onActionSelected = { action, _ ->
                 val key = if (folderInfo != null && indexInFolder != null) {
                     "folder:${folderInfo.id}:$indexInFolder:${showActionChooser!!.name}"
                 } else if (folderInfo != null) {
@@ -1090,10 +1147,11 @@ fun GestureConfigDialog(
 @Composable
 fun ActionChooserDialog(
     viewModel: LauncherViewModel,
-    onActionSelected: (GestureAction, AppInfo) -> Unit,
+    onActionSelected: (GestureAction?, AppInfo?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val allApps by viewModel.allApps.collectAsState()
+    val sortedApps = remember(allApps) { allApps.sortedBy { it.label } }
     val allShortcuts by viewModel.allShortcuts.collectAsState()
     val expandedState = remember { mutableStateMapOf<String, Boolean>() }
 
@@ -1102,7 +1160,15 @@ fun ActionChooserDialog(
         title = { Text("Choose an action") },
         text = {
             LazyColumn {
-                items(items = allApps.toList(), key = { it.packageName }) { app ->
+                item {
+                    TextButton(
+                        onClick = { onActionSelected(null, null) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("None")
+                    }
+                }
+                items(items = sortedApps, key = { it.packageName }) { app ->
                     val isExpanded = expandedState[app.packageName] ?: false
                     Column {
                         Row(

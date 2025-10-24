@@ -295,8 +295,16 @@ class LauncherViewModel : ViewModel() {
         return gestureConfigs[key]
     }
 
-    fun setGestureConfig(key: String, gesture: GestureDirection, action: GestureAction) {
-        gestureConfigs[key] = GestureConfig(gesture, action)
+    fun setGestureConfig(key: String, gesture: GestureDirection, action: GestureAction?) {
+        if (action != null) {
+            gestureConfigs[key] = GestureConfig(gesture, action)
+        } else {
+            gestureConfigs.remove(key)
+        }
+    }
+
+    fun removeGestureConfig(key: String) {
+        gestureConfigs.remove(key)
     }
 
     private fun loadAllShortcuts(context: Context, allApps: List<AppInfo>) {
