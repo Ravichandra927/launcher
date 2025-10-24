@@ -123,7 +123,12 @@ fun Modifier.unifiedGestureDetector(
                                     lastTapTime = currentTime
                                     pendingTapJob = launch {
                                         delay(doubleTapTimeout)
-                                        onTap()
+                                        if (onDoubleTap()) {
+                                            lastTapTime = 0
+                                            gestureHandled = true
+                                        } else {
+                                            onTap()
+                                        }
                                     }
                                     gestureHandled = true
                                 }

@@ -539,7 +539,7 @@ fun AppItem(
             onLongPress = {
                 onLongPressHandled()
                 hasShortcutPermission = viewModel.showShortcuts(context, appInfo)
-				true
+				return@unifiedGestureDetector true
             },
             onSwipe = { direction ->
                 val key = if (folderInfo != null && indexInFolder != null) {
@@ -722,6 +722,7 @@ fun FolderItem(
                             onLongPress = {
                                 onLongPressHandled()
                                 viewModel.showFolderMenu(folderInfo)
+                                return@unifiedGestureDetector true
                             },
                             onSwipe = { direction ->
                                 return@unifiedGestureDetector viewModel.performFolderGesture(
