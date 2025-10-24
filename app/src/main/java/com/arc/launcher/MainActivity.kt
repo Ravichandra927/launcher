@@ -8,6 +8,7 @@ import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.view.ViewConfiguration
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -155,6 +156,8 @@ private fun findTargetIndexInFolder(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun AppList(viewModel: LauncherViewModel = viewModel()) {
+    BackHandler(enabled = true) {}
+
     val context = LocalContext.current
     val items by viewModel.items.collectAsState()
     val appToShowGestureConfig by remember { derivedStateOf { viewModel.showGestureConfig } }
