@@ -41,9 +41,16 @@ import androidx.compose.foundation.lazy.grid.items as lazyGridItems // Alias for
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Gesture
+import androidx.compose.material.icons.filled.NorthEast
+import androidx.compose.material.icons.filled.NorthWest
+import androidx.compose.material.icons.filled.SouthEast
+import androidx.compose.material.icons.filled.SouthWest
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -518,7 +525,13 @@ fun AppItem(
     val showShortcutsMenu = viewModel.showShortcutsMenu == appInfo && !isGhost
     val shortcuts = viewModel.shortcuts
     val density = LocalDensity.current
-    val hasGestures = viewModel.hasCustomGestures(appInfo, folderInfo, indexInFolder)
+    val hasGestures by viewModel.gestureConfigs.collectAsState().let { state ->
+        remember(state.value) {
+            derivedStateOf {
+                viewModel.hasCustomGestures(appInfo, folderInfo, indexInFolder)
+            }
+        }
+    }
     var hasShortcutPermission by remember { mutableStateOf(true) }
 
     val gestureModifier = if (onDragStart != null && onDrag != null && onDragEnd != null && onDragCancel != null) {
@@ -695,6 +708,13 @@ fun FolderItem(
     val context = LocalContext.current
     val density = LocalDensity.current
     val showFolderMenu = viewModel.showFolderMenu == folderInfo.id
+    val hasGestures by viewModel.gestureConfigs.collectAsState().let { state ->
+        remember(state.value) {
+            derivedStateOf {
+                viewModel.hasCustomGestures(AppInfo(folderInfo.name, ""), folderInfo, null)
+            }
+        }
+    }
 
     key(folderInfo) {
         Box(
@@ -747,7 +767,7 @@ fun FolderItem(
                     ) {
                         FolderIconLayout(folderInfo)
                     }
-                    if (folderInfo.gestureMode == GestureMode.CUSTOM) {
+                    if (folderInfo.gestureMode == GestureMode.CUSTOM && hasGestures) {
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val center = Offset(size.width - 12f, 12f)
                             drawCircle(
@@ -783,6 +803,12 @@ fun FolderItem(
                             null
                         )
                         viewModel.hideFolderMenu()
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Gesture,
+                            contentDescription = "Gestures"
+                        )
                     }
                 )
             }
@@ -945,7 +971,7 @@ fun ExpandedFolderDialog(
                                         onDragEnd = onAppDragEnd,
                                         onDragCancel = onAppDragCancel
                                     )
-                                }
+                                 }
                             }
                          }
                     }
@@ -1006,6 +1032,23 @@ fun AssignedAction(
 }
 
 @Composable
+fun GestureIcon(gesture: GestureDirection, modifier: Modifier = Modifier) {
+    val icon = when (gesture) {
+        GestureDirection.UP -> Icons.Default.ArrowUpward
+        GestureDirection.DOWN -> Icons.Default.ArrowDownward
+        GestureDirection.LEFT -> Icons.AutoMirrored.Filled.ArrowBack
+        GestureDirection.RIGHT -> Icons.AutoMirrored.Filled.ArrowForward
+        GestureDirection.UP_LEFT -> Icons.Default.NorthWest
+        GestureDirection.UP_RIGHT -> Icons.Default.NorthEast
+        GestureDirection.DOWN_LEFT -> Icons.Default.SouthWest
+        GestureDirection.DOWN_RIGHT -> Icons.Default.SouthEast
+        GestureDirection.DOUBLE_TAP -> Icons.Default.Gesture
+        else -> Icons.Default.Gesture // Fallback for single tap or other gestures
+    }
+    Icon(icon, contentDescription = gesture.description, modifier = modifier)
+}
+
+@Composable
 fun GestureConfigDialog(
     appInfo: AppInfo,
     folderInfo: FolderInfo? = null,
@@ -1015,8 +1058,15 @@ fun GestureConfigDialog(
 ) {
     val context = LocalContext.current
     var showActionChooser by remember { mutableStateOf<GestureDirection?>(null) }
+    var showClearAllConfirmation by remember { mutableStateOf(false) }
     val allApps by viewModel.allApps.collectAsState()
     val allShortcuts by viewModel.allShortcuts.collectAsState()
+    val gestureConfigs by viewModel.gestureConfigs.collectAsState()
+    val hasCustomGestures by remember(gestureConfigs) {
+        derivedStateOf {
+            viewModel.hasCustomGestures(appInfo, folderInfo, indexInFolder)
+        }
+    }
 
     val isFolderGestureConfig = folderInfo != null && indexInFolder == null
 
@@ -1024,11 +1074,17 @@ fun GestureConfigDialog(
         mutableStateOf(folderInfo?.gestureMode ?: GestureMode.CUSTOM)
     }
 
-    if (showActionChooser == null) {
-        AlertDialog(
-            onDismissRequest = onDismiss,
-            title = { Text("Configure Gestures for ${appInfo.label}") },
-            text = {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            if (showActionChooser == null) {
+                Text("Configure Gestures for ${appInfo.label}")
+            } else {
+                Text("Choose an action")
+            }
+        },
+        text = {
+            if (showActionChooser == null) {
                 Column {
                     if (isFolderGestureConfig) {
                         Row(
@@ -1040,13 +1096,19 @@ fun GestureConfigDialog(
                                 modifier = Modifier
                                     .selectable(
                                         selected = (selectedMode == GestureMode.DEFAULT),
-                                        onClick = { selectedMode = GestureMode.DEFAULT }
+                                        onClick = {
+                                            selectedMode = GestureMode.DEFAULT
+                                            folderInfo?.let { viewModel.toggleGestureMode(context, it) }
+                                        }
                                     )
                                     .padding(horizontal = 8.dp)
                             ) {
                                 RadioButton(
                                     selected = (selectedMode == GestureMode.DEFAULT),
-                                    onClick = { selectedMode = GestureMode.DEFAULT }
+                                    onClick = {
+                                        selectedMode = GestureMode.DEFAULT
+                                        folderInfo?.let { viewModel.toggleGestureMode(context, it) }
+                                    }
                                 )
                                 Text("Default")
                             }
@@ -1056,13 +1118,19 @@ fun GestureConfigDialog(
                                 modifier = Modifier
                                     .selectable(
                                         selected = (selectedMode == GestureMode.CUSTOM),
-                                        onClick = { selectedMode = GestureMode.CUSTOM }
+                                        onClick = {
+                                            selectedMode = GestureMode.CUSTOM
+                                            folderInfo?.let { viewModel.toggleGestureMode(context, it) }
+                                        }
                                     )
                                     .padding(horizontal = 8.dp)
                             ) {
                                 RadioButton(
                                     selected = (selectedMode == GestureMode.CUSTOM),
-                                    onClick = { selectedMode = GestureMode.CUSTOM }
+                                    onClick = {
+                                        selectedMode = GestureMode.CUSTOM
+                                        folderInfo?.let { viewModel.toggleGestureMode(context, it) }
+                                    }
                                 )
                                 Text("Custom")
                             }
@@ -1086,7 +1154,7 @@ fun GestureConfigDialog(
                                 } else {
                                     "app:${appInfo.packageName}:${gesture.name}"
                                 }
-                                val config = viewModel.getGestureConfig(key)
+                                val config = gestureConfigs[key]
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1094,7 +1162,10 @@ fun GestureConfigDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
+                                    GestureIcon(gesture, modifier = Modifier.size(24.dp))
+                                    Spacer(modifier = Modifier.width(16.dp))
                                     Text(gesture.description)
+                                    Spacer(modifier = Modifier.weight(1f))
                                     Button(onClick = { showActionChooser = gesture }) {
                                         AssignedAction(
                                             action = config?.action,
@@ -1107,137 +1178,156 @@ fun GestureConfigDialog(
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (isFolderGestureConfig && folderInfo != null && selectedMode != folderInfo.gestureMode) {
-                        viewModel.toggleGestureMode(context, folderInfo)
+            } else {
+                ActionChooserContent(
+                    viewModel = viewModel,
+                    onActionSelected = { action, _ ->
+                        val key = if (folderInfo != null && indexInFolder != null) {
+                            "folder:${folderInfo.id}:$indexInFolder:${showActionChooser!!.name}"
+                        } else if (folderInfo != null) {
+                            "folder:${folderInfo.id}:${showActionChooser!!.name}"
+                        } else {
+                            "app:${appInfo.packageName}:${showActionChooser!!.name}"
+                        }
+                        viewModel.setGestureConfig(context, key, showActionChooser!!, action)
+                        showActionChooser = null
                     }
-                    viewModel.saveGestureConfigs(context)
-                    onDismiss()
-                }) {
-                    Text("Save")
+                )
+            }
+        },
+        confirmButton = {
+            if (showActionChooser == null) {
+                TextButton(onClick = onDismiss) {
+                    Text("Close")
+                }
+            }
+        },
+        dismissButton = {
+            if (showActionChooser == null && hasCustomGestures) {
+                TextButton(onClick = { showClearAllConfirmation = true }) {
+                    Text("Clear All")
+                }
+            }
+        }
+    )
+
+    if (showClearAllConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showClearAllConfirmation = false },
+            title = { Text("Clear All Gestures?") },
+            text = { Text("Are you sure you want to remove all custom gestures for ${appInfo.label}?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val keyPrefix = if (folderInfo != null && indexInFolder != null) {
+                            "folder:${folderInfo.id}:$indexInFolder:"
+                        } else if (folderInfo != null) {
+                            "folder:${folderInfo.id}:"
+                        } else {
+                            "app:${appInfo.packageName}:"
+                        }
+                        viewModel.clearAllGestures(context, keyPrefix)
+                        showClearAllConfirmation = false
+                    }
+                ) {
+                    Text("Clear")
                 }
             },
             dismissButton = {
-                TextButton(onClick = onDismiss) {
+                TextButton(onClick = { showClearAllConfirmation = false }) {
                     Text("Cancel")
                 }
             }
-        )
-    } else {
-        ActionChooserDialog(
-            viewModel = viewModel,
-            onActionSelected = { action, _ ->
-                val key = if (folderInfo != null && indexInFolder != null) {
-                    "folder:${folderInfo.id}:$indexInFolder:${showActionChooser!!.name}"
-                } else if (folderInfo != null) {
-                    "folder:${folderInfo.id}:${showActionChooser!!.name}"
-                } else {
-                    "app:${appInfo.packageName}:${showActionChooser!!.name}"
-                }
-                viewModel.setGestureConfig(key, showActionChooser!!, action)
-                showActionChooser = null
-            },
-            onDismiss = { showActionChooser = null }
         )
     }
 }
 
 @Composable
-fun ActionChooserDialog(
+fun ActionChooserContent(
     viewModel: LauncherViewModel,
     onActionSelected: (GestureAction?, AppInfo?) -> Unit,
-    onDismiss: () -> Unit,
 ) {
     val allApps by viewModel.allApps.collectAsState()
     val sortedApps = remember(allApps) { allApps.sortedBy { it.label } }
     val allShortcuts by viewModel.allShortcuts.collectAsState()
     val expandedState = remember { mutableStateMapOf<String, Boolean>() }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Choose an action") },
-        text = {
-            LazyColumn {
-                item {
-                    TextButton(
-                        onClick = { onActionSelected(null, null) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("None")
+    LazyColumn {
+        item {
+            TextButton(
+                onClick = { onActionSelected(null, null) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("None")
+            }
+        }
+        items(items = sortedApps, key = { it.packageName }) { app ->
+            val isExpanded = expandedState[app.packageName] ?: false
+            Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onActionSelected(GestureAction.LaunchApp(app.packageName), app)
+                        }
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    app.icon?.let {
+                        Image(
+                            painter = rememberDrawablePainter(drawable = it),
+                            contentDescription = app.label,
+                            modifier = Modifier.size(48.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = app.label, modifier = Modifier.weight(1f))
+                    IconButton(onClick = {
+                        expandedState[app.packageName] = !isExpanded
+                    }) {
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Filled.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = if (isExpanded) "Collapse" else "Expand"
+                        )
                     }
                 }
-                items(items = sortedApps, key = { it.packageName }) { app ->
-                    val isExpanded = expandedState[app.packageName] ?: false
-                    Column {
+                if (isExpanded) {
+                    allShortcuts[app.packageName]?.forEach { shortcut ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    onActionSelected(GestureAction.LaunchApp(app.packageName), app)
+                                    shortcut.info?.let {
+                                        onActionSelected(
+                                            GestureAction.LaunchShortcut(
+                                                app.packageName,
+                                                it.id
+                                            ),
+                                            app
+                                        )
+                                    }
                                 }
-                                .padding(8.dp),
+                                .padding(
+                                    start = 32.dp,
+                                    top = 4.dp,
+                                    bottom = 4.dp,
+                                    end = 8.dp
+                                ),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            app.icon?.let {
+                            shortcut.icon?.let {
                                 Image(
                                     painter = rememberDrawablePainter(drawable = it),
-                                    contentDescription = app.label,
-                                    modifier = Modifier.size(48.dp)
+                                    contentDescription = shortcut.label,
+                                    modifier = Modifier.size(32.dp)
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
                             }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = app.label, modifier = Modifier.weight(1f))
-                            IconButton(onClick = {
-                                expandedState[app.packageName] = !isExpanded
-                            }) {
-                                Icon(
-                                    imageVector = if (isExpanded) Icons.Filled.ArrowDropDown else Icons.AutoMirrored.Filled.ArrowForward,
-                                    contentDescription = if (isExpanded) "Collapse" else "Expand"
-                                )
-                            }
-                        }
-                        if (isExpanded) {
-                            allShortcuts[app.packageName]?.forEach { shortcut ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            shortcut.info?.let {
-                                                onActionSelected(
-                                                    GestureAction.LaunchShortcut(
-                                                        app.packageName,
-                                                        it.id
-                                                    ),
-                                                    app
-                                                )
-                                            }
-                                        }
-                                        .padding(
-                                            start = 32.dp,
-                                            top = 4.dp,
-                                            bottom = 4.dp,
-                                            end = 8.dp
-                                        ),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    shortcut.icon?.let {
-                                        Image(
-                                            painter = rememberDrawablePainter(drawable = it),
-                                            contentDescription = shortcut.label,
-                                            modifier = Modifier.size(32.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                    }
-                                    Text(text = shortcut.label)
-                                }
-                            }
+                            Text(text = shortcut.label)
                         }
                     }
                 }
             }
-        },
-        confirmButton = {}
-    )
+        }
+    }
 }

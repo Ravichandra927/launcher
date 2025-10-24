@@ -72,7 +72,8 @@ class LauncherViewModel : ViewModel() {
     var draggedAppFromFolder by mutableStateOf<Pair<AppInfo, FolderInfo>?>(null)
         private set
 
-    private var gestureConfigs = mutableMapOf<String, GestureConfig>()
+    private val _gestureConfigs = MutableStateFlow<Map<String, GestureConfig>>(emptyMap())
+    val gestureConfigs: StateFlow<Map<String, GestureConfig>> = _gestureConfigs.asStateFlow()
 
     fun loadApps(context: Context) {
         viewModelScope.launch {
@@ -273,38 +274,44 @@ class LauncherViewModel : ViewModel() {
                 val file = File(context.filesDir, "gestures.json")
                 if (file.exists()) {
                     val jsonText = file.readText()
-                    gestureConfigs = json.decodeFromString<MutableMap<String, GestureConfig>>(jsonText)
+                    _gestureConfigs.value = json.decodeFromString<Map<String, GestureConfig>>(jsonText)
                 } else {
-                    gestureConfigs = mutableMapOf() // Initialize if file doesn't exist
+                    _gestureConfigs.value = emptyMap()
                 }
             }
         }
     }
 
-    fun saveGestureConfigs(context: Context) {
+    private fun saveGestureConfigs(context: Context) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                val jsonText = json.encodeToString(gestureConfigs)
+                val jsonText = json.encodeToString(_gestureConfigs.value)
                 File(context.filesDir, "gestures.json").writeText(jsonText)
-                refreshGestureConfigs(context) // Refresh after saving to ensure consistency
             }
         }
     }
 
     fun getGestureConfig(key: String): GestureConfig? {
-        return gestureConfigs[key]
+        return _gestureConfigs.value[key]
     }
 
-    fun setGestureConfig(key: String, gesture: GestureDirection, action: GestureAction?) {
+    fun setGestureConfig(context: Context, key: String, gesture: GestureDirection, action: GestureAction?) {
+        val newConfigs = _gestureConfigs.value.toMutableMap()
         if (action != null) {
-            gestureConfigs[key] = GestureConfig(gesture, action)
+            newConfigs[key] = GestureConfig(gesture, action)
         } else {
-            gestureConfigs.remove(key)
+            newConfigs.remove(key)
         }
+        _gestureConfigs.value = newConfigs
+        saveGestureConfigs(context)
     }
 
-    fun removeGestureConfig(key: String) {
-        gestureConfigs.remove(key)
+    fun clearAllGestures(context: Context, keyPrefix: String) {
+        val newConfigs = _gestureConfigs.value.toMutableMap()
+        val keysToRemove = newConfigs.keys.filter { it.startsWith(keyPrefix) }
+        keysToRemove.forEach { newConfigs.remove(it) }
+        _gestureConfigs.value = newConfigs
+        saveGestureConfigs(context)
     }
 
     private fun loadAllShortcuts(context: Context, allApps: List<AppInfo>) {
@@ -490,7 +497,7 @@ class LauncherViewModel : ViewModel() {
             } else {
                 "app:${appInfo.packageName}:${gesture.name}"
             }
-            gestureConfigs.containsKey(key)
+            _gestureConfigs.value.containsKey(key)
         }
     }
 
