@@ -41,6 +41,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -624,6 +625,12 @@ fun AppItem(
                     onClick = {
                         viewModel.showGestureConfig(appInfo, folderInfo, indexInFolder)
                         viewModel.hideShortcuts()
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Gesture,
+                            contentDescription = "Gestures"
+                        )
                     }
                 )
                 if (!hasShortcutPermission) {
