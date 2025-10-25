@@ -40,12 +40,14 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as lazyGridItems // Alias for LazyVerticalGrid items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.NorthWest
@@ -80,17 +82,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
@@ -170,6 +180,7 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
     val context = LocalContext.current
     val items by viewModel.items.collectAsState()
     val appToShowGestureConfig by remember { derivedStateOf { viewModel.showGestureConfig } }
+    val folderToRename by remember { derivedStateOf { viewModel.folderToRename } }
     var longPressHandled by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -191,6 +202,7 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
     var draggedItemSize by remember { mutableStateOf(Size.Zero) }
     var expandedFolderId by remember { mutableStateOf<String?>(null) }
     var folderVisualsVisible by remember { mutableStateOf(true) }
+    var isDraggingOutOfFolder by remember { mutableStateOf(false) }
 
 
     val onFolderAppDrag = { change: PointerInputChange, dragAmount: Offset ->
@@ -200,10 +212,20 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
 
         val isInFolder = folderContentBounds?.contains(currentDragPosition) ?: false
         if (!isInFolder) {
-            expandedFolderId = null
+            isDraggingOutOfFolder = true
         }
 
-        val currentBounds = if (isInFolder) folderItemBounds else itemBounds
+        if (isDraggingOutOfFolder) {
+            if (folderVisualsVisible) {
+                folderVisualsVisible = false
+            }
+        } else {
+            if (folderVisualsVisible != isInFolder) {
+                folderVisualsVisible = isInFolder
+            }
+        }
+
+        val currentBounds = if (isInFolder && !isDraggingOutOfFolder) folderItemBounds else itemBounds
         val newDropTarget = currentBounds.entries.find { (key, bounds) ->
             val draggedItemKey = when (val item = draggedItem) {
                 is LauncherItem.App -> "app_${item.appInfo.packageName}"
@@ -227,7 +249,7 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
     val onFolderAppDragEnd = {
         val (appToMove, fromFolder) = viewModel.draggedAppFromFolder!!
         val currentDragPosition = dragOffset + Offset(draggedItemSize.width / 2, draggedItemSize.height / 2)
-        val isInFolder = folderContentBounds?.contains(currentDragPosition) ?: false
+        val isInFolder = folderContentBounds?.contains(currentDragPosition) ?: false && !isDraggingOutOfFolder
 
         if (isInFolder) {
             val fromIndex = fromFolder.apps.indexOf(appToMove)
@@ -236,7 +258,14 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
         } else {
             when (val target = dropTarget) {
                 is LauncherItem.App -> viewModel.moveAppFromFolderToApp(context, appToMove, fromFolder, target.appInfo)
-                is LauncherItem.Folder -> viewModel.moveAppBetweenFolders(context, appToMove, fromFolder, target.folderInfo)
+                is LauncherItem.Folder -> {
+                    if (fromFolder.id == target.folderInfo.id) {
+                        val toIndex = findTargetIndexInFolder(currentDragPosition, folderItemBounds, fromFolder.apps)
+                        viewModel.reorderAppInFolder(context, fromFolder.id, 0, toIndex)
+                    } else {
+                        viewModel.moveAppBetweenFolders(context, appToMove, fromFolder, target.folderInfo)
+                    }
+                }
                 null -> {
                     val targetIndex = findTargetIndex(dragOffset, itemBounds, items)
                     viewModel.moveAppFromFolderToHome(context, appToMove, fromFolder, targetIndex)
@@ -249,6 +278,7 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
         dropTarget = null
         expandedFolderId = null
         folderVisualsVisible = true
+        isDraggingOutOfFolder = false
     }
 
     val onFolderAppDragCancel = {
@@ -258,6 +288,7 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
         dropTarget = null
         expandedFolderId = null
         folderVisualsVisible = true
+        isDraggingOutOfFolder = false
     }
 
     val onDrag = { change: PointerInputChange, dragAmount: Offset ->
@@ -501,6 +532,14 @@ fun AppList(viewModel: LauncherViewModel = viewModel()) {
                 indexInFolder = indexInFolder,
                 onDismiss = { viewModel.hideGestureConfig() },
                 viewModel = viewModel
+            )
+        }
+
+        folderToRename?.let { folder ->
+            RenameFolderDialog(
+                folderInfo = folder,
+                viewModel = viewModel,
+                onDismiss = { viewModel.finishRenameFolder() }
             )
         }
     }
@@ -795,6 +834,19 @@ fun FolderItem(
                 onDismissRequest = { viewModel.hideFolderMenu() }
             ) {
                 DropdownMenuItem(
+                    text = { Text("Rename") },
+                    onClick = {
+                        viewModel.startRenameFolder(folderInfo)
+                        viewModel.hideFolderMenu()
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Rename"
+                        )
+                    }
+                )
+                DropdownMenuItem(
                     text = { Text("Gestures") },
                     onClick = {
                         viewModel.showGestureConfig(
@@ -884,7 +936,19 @@ fun ExpandedFolderDialog(
     folderItemBounds: MutableMap<Any, Rect>,
     onFolderContentPositioned: (Rect) -> Unit,
 ) {
-    val folderCardAlpha by animateFloatAsState(if (visible) 1f else 0f, label = "alpha") // Renamed state variable
+    val folderCardAlpha by animateFloatAsState(if (visible) 1f else 0f, label = "alpha")
+    var isEditingFolderName by remember { mutableStateOf(false) }
+    var folderNameState by remember(folderInfo.name) { mutableStateOf(TextFieldValue(folderInfo.name)) }
+    val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
+
+    LaunchedEffect(isEditingFolderName) {
+        if (isEditingFolderName) {
+            focusRequester.requestFocus()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -905,7 +969,7 @@ fun ExpandedFolderDialog(
                     modifier = Modifier
                         .fillMaxWidth(0.8f)
                         .padding(16.dp)
-                        .graphicsLayer { alpha = folderCardAlpha } // Used new state variable
+                        .graphicsLayer { alpha = folderCardAlpha }
                         .onGloballyPositioned {
                             onFolderContentPositioned(
                                 Rect(
@@ -921,11 +985,43 @@ fun ExpandedFolderDialog(
                         )
                 ) {
                     Column {
-                        Text(
-                            folderInfo.name,
-                            style = MaterialTheme.typography.headlineSmall,
-                            modifier = Modifier.padding(16.dp)
-                        )
+                        if (isEditingFolderName) {
+                            BasicTextField(
+                                value = folderNameState,
+                                onValueChange = { folderNameState = it },
+                                textStyle = MaterialTheme.typography.headlineSmall.copy(color = MaterialTheme.colorScheme.onSurface),
+                                singleLine = true,
+                                modifier = Modifier
+                                    .padding(16.dp)
+                                    .focusRequester(focusRequester)
+                                    .onFocusChanged { focusState ->
+                                        if (!focusState.isFocused) {
+                                            isEditingFolderName = false
+                                            viewModel.updateFolderName(context, folderInfo.id, folderNameState.text)
+                                        }
+                                    }
+                                    .onKeyEvent {
+                                        if (it.key == Key.Enter) {
+                                            isEditingFolderName = false
+                                            viewModel.updateFolderName(context, folderInfo.id, folderNameState.text)
+                                            focusManager.clearFocus()
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    }
+                            )
+                        } else {
+                            Text(
+                                text = folderInfo.name,
+                                style = MaterialTheme.typography.headlineSmall,
+                                modifier = Modifier
+                                    .padding(16.dp)
+                                    .clickable {
+                                        isEditingFolderName = true
+                                    }
+                            )
+                        }
                         val appCount = folderInfo.apps.size
                         val gridCells = when {
                             appCount <= 1 -> GridCells.Fixed(1)
@@ -979,6 +1075,53 @@ fun ExpandedFolderDialog(
             }
         }
     }
+}
+
+@Composable
+fun RenameFolderDialog(
+    folderInfo: FolderInfo,
+    viewModel: LauncherViewModel,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var textState by remember { mutableStateOf(TextFieldValue(folderInfo.name)) }
+    val focusRequester = remember { FocusRequester() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename Folder") },
+        text = {
+            BasicTextField(
+                value = textState,
+                onValueChange = { textState = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+            )
+            LaunchedEffect(Unit) {
+                focusRequester.requestFocus()
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    viewModel.updateFolderName(context, folderInfo.id, textState.text)
+                    onDismiss()
+                }
+            ) {
+                Text("OK")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    onDismiss()
+                }
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable

@@ -72,6 +72,9 @@ class LauncherViewModel : ViewModel() {
     var draggedAppFromFolder by mutableStateOf<Pair<AppInfo, FolderInfo>?>(null)
         private set
 
+    var folderToRename by mutableStateOf<FolderInfo?>(null)
+        private set
+
     private val _gestureConfigs = MutableStateFlow<Map<String, GestureConfig>>(emptyMap())
     val gestureConfigs: StateFlow<Map<String, GestureConfig>> = _gestureConfigs.asStateFlow()
 
@@ -359,13 +362,16 @@ class LauncherViewModel : ViewModel() {
         if (folderIndex != -1) {
             val oldFolderItem = currentList[folderIndex] as LauncherItem.Folder
             val updatedApps = oldFolderItem.folderInfo.apps.toMutableList()
-            if (fromIndex != -1 && fromIndex != toIndex) {
+            if (fromIndex >= 0 && fromIndex < updatedApps.size && fromIndex != toIndex) {
                 val appToMove = updatedApps.removeAt(fromIndex)
-                updatedApps.add(if (toIndex > fromIndex) toIndex - 1 else toIndex, appToMove)
-                val newFolderInfo = oldFolderItem.folderInfo.copy(apps = updatedApps)
-                currentList[folderIndex] = LauncherItem.Folder(newFolderInfo)
-                _items.value = currentList.toImmutableList()
-                saveItems(context)
+                val newToIndex = if (toIndex > fromIndex) toIndex - 1 else toIndex
+                if (newToIndex >= 0 && newToIndex <= updatedApps.size) {
+                    updatedApps.add(newToIndex, appToMove)
+                    val newFolderInfo = oldFolderItem.folderInfo.copy(apps = updatedApps)
+                    currentList[folderIndex] = LauncherItem.Folder(newFolderInfo)
+                    _items.value = currentList.toImmutableList()
+                    saveItems(context)
+                }
             }
         }
     }
@@ -527,6 +533,26 @@ class LauncherViewModel : ViewModel() {
                 }
             }
         }
+    }
+
+    fun updateFolderName(context: Context, folderId: String, newName: String) {
+        val currentList = _items.value.toMutableList()
+        val folderIndex = currentList.indexOfFirst { it is LauncherItem.Folder && it.folderInfo.id == folderId }
+        if (folderIndex != -1) {
+            val oldFolderItem = currentList[folderIndex] as LauncherItem.Folder
+            val newFolderInfo = oldFolderItem.folderInfo.copy(name = newName)
+            currentList[folderIndex] = LauncherItem.Folder(newFolderInfo)
+            _items.value = currentList.toImmutableList()
+            saveItems(context)
+        }
+    }
+
+    fun startRenameFolder(folderInfo: FolderInfo) {
+        folderToRename = folderInfo
+    }
+
+    fun finishRenameFolder() {
+        folderToRename = null
     }
 
     @Serializable
