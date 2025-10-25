@@ -89,6 +89,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
@@ -100,6 +101,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -937,17 +939,13 @@ fun ExpandedFolderDialog(
     onFolderContentPositioned: (Rect) -> Unit,
 ) {
     val folderCardAlpha by animateFloatAsState(if (visible) 1f else 0f, label = "alpha")
-    var isEditingFolderName by remember { mutableStateOf(false) }
-    var folderNameState by remember(folderInfo.name) { mutableStateOf(TextFieldValue(folderInfo.name)) }
+    var folderNameState by remember(folderInfo.name) {
+        mutableStateOf(TextFieldValue(folderInfo.name))
+    }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
-
-    LaunchedEffect(isEditingFolderName) {
-        if (isEditingFolderName) {
-            focusRequester.requestFocus()
-        }
-    }
+    var isFocused by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -978,50 +976,54 @@ fun ExpandedFolderDialog(
                                 )
                             )
                         }
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = {}
-                        )
                 ) {
                     Column {
-                        if (isEditingFolderName) {
-                            BasicTextField(
-                                value = folderNameState,
-                                onValueChange = { folderNameState = it },
-                                textStyle = MaterialTheme.typography.headlineSmall.copy(color = MaterialTheme.colorScheme.onSurface),
-                                singleLine = true,
-                                modifier = Modifier
-                                    .padding(16.dp)
-                                    .focusRequester(focusRequester)
-                                    .onFocusChanged { focusState ->
-                                        if (!focusState.isFocused) {
-                                            isEditingFolderName = false
-                                            viewModel.updateFolderName(context, folderInfo.id, folderNameState.text)
-                                        }
+                        val interactionSource = remember { MutableInteractionSource() }
+                        BasicTextField(
+                            value = folderNameState,
+                            onValueChange = { folderNameState = it },
+                            textStyle = MaterialTheme.typography.headlineSmall.copy(
+                                color = MaterialTheme.colorScheme.onSurface
+                            ),
+                            singleLine = true,
+                            cursorBrush = if (isFocused) SolidColor(MaterialTheme.colorScheme.primary) else SolidColor(
+                                Color.Transparent
+                            ),
+                            interactionSource = interactionSource,
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester)
+                                .onFocusChanged {
+                                    isFocused = it.isFocused
+                                    if (!it.isFocused) {
+                                        viewModel.updateFolderName(
+                                            context,
+                                            folderInfo.id,
+                                            folderNameState.text
+                                        )
+                                    } else {
+                                        // When focused, select all text
+                                        folderNameState = folderNameState.copy(
+                                            selection = TextRange(0, folderNameState.text.length)
+                                        )
                                     }
-                                    .onKeyEvent {
-                                        if (it.key == Key.Enter) {
-                                            isEditingFolderName = false
-                                            viewModel.updateFolderName(context, folderInfo.id, folderNameState.text)
-                                            focusManager.clearFocus()
-                                            true
-                                        } else {
-                                            false
-                                        }
+                                }
+                                .onKeyEvent {
+                                    if (it.key == Key.Enter) {
+                                        viewModel.updateFolderName(
+                                            context,
+                                            folderInfo.id,
+                                            folderNameState.text
+                                        )
+                                        focusManager.clearFocus()
+                                        true
+                                    } else {
+                                        false
                                     }
-                            )
-                        } else {
-                            Text(
-                                text = folderInfo.name,
-                                style = MaterialTheme.typography.headlineSmall,
-                                modifier = Modifier
-                                    .padding(16.dp)
-                                    .clickable {
-                                        isEditingFolderName = true
-                                    }
-                            )
-                        }
+                                }
+                        )
+
                         val appCount = folderInfo.apps.size
                         val gridCells = when {
                             appCount <= 1 -> GridCells.Fixed(1)
@@ -1042,7 +1044,8 @@ fun ExpandedFolderDialog(
                                         .onGloballyPositioned {
                                             position = it.positionInRoot()
                                             size = it.size.toSize()
-                                            folderItemBounds["app_${app.packageName}"] = Rect(position, size)
+                                            folderItemBounds["app_${app.packageName}"] =
+                                                Rect(position, size)
                                         }
                                         .graphicsLayer {
                                             alpha = if (isBeingDragged) 0f else 1f
