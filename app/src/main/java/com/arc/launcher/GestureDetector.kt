@@ -1,8 +1,12 @@
 package com.arc.launcher
 
+import android.util.Log
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.forEachGesture
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
@@ -31,94 +35,116 @@ fun getSwipeDirection(dragAmount: Offset): GestureDirection {
 
 fun Modifier.unifiedGestureDetector(
     onTap: () -> Unit,
-    onDoubleTap: () -> Unit,
-    onLongPress: () -> Unit,
-    onSwipe: (GestureDirection) -> Unit,
+    onDoubleTap: () -> Boolean,
+    onLongPress: () -> Boolean,
+    onSwipe: (GestureDirection) -> Boolean,
     onDragStart: () -> Unit,
     onDrag: (change: PointerInputChange, dragAmount: Offset) -> Unit,
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
     swipeThreshold: Float,
     doubleTapTimeout: Long
-): Modifier = this.pointerInput(Unit) {
-    var lastTapTime = 0L
-    var pendingTapJob: Job? = null
+): Modifier = composed {
+    val scope = rememberCoroutineScope()
+    val gestureState = remember {
+        object {
+            var lastTapTime = 0L
+            var pendingTapJob: Job? = null
+        }
+    }
 
-    forEachGesture {
-        coroutineScope {
-            awaitPointerEventScope {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                pendingTapJob?.cancel() // Cancel any pending tap from previous gesture
-                down.consume()
+    pointerInput(Unit) {
+        forEachGesture {
+            coroutineScope {
+                awaitPointerEventScope {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    gestureState.pendingTapJob?.cancel()
 
-                var gestureConsumed = false
-                var longPressFired = false
-                var dragStarted = false
+                    var gestureHandled = false
+                    var longPressFired = false
+                    var dragStarted = false
 
-                val longPressJob = launch {
-                    delay(500L) // ViewConfiguration.getLongPressTimeout()
-                    if (!dragStarted) {
-                        onLongPress()
-                        longPressFired = true
-                    }
-                }
-
-                var totalDrag = Offset.Zero
-
-                while (!gestureConsumed) {
-                    val event = awaitPointerEvent()
-                    val dragChange = event.changes.firstOrNull { it.id == down.id }
-
-                    if (dragChange == null) {
-                        longPressJob.cancel()
-                        if (dragStarted) onDragCancel()
-                        break
-                    }
-
-                    if (dragChange.pressed) {
-                        val positionChange = dragChange.positionChange()
-                        totalDrag += positionChange
-
-                        if (longPressFired) {
-                            if (!dragStarted) {
-                                onDragStart()
-                                dragStarted = true
-                            }
-                            onDrag(dragChange, positionChange)
-                            dragChange.consume()
-                        } else {
-                            if (totalDrag.getDistance() > viewConfiguration.touchSlop) {
-                                longPressJob.cancel()
+                    val longPressJob = launch {
+                        delay(500L) // ViewConfiguration.getLongPressTimeout()
+                        if (!dragStarted) {
+                            if (onLongPress()) {
+                                longPressFired = true
+                                gestureHandled = true
                             }
                         }
-                    } else { // UP event
-                        longPressJob.cancel()
+                    }
 
-                        if (dragStarted) {
-                            onDragEnd()
-                        } else if (!longPressFired) {
-                            if (totalDrag.getDistance() > swipeThreshold) {
-                                onSwipe(getSwipeDirection(totalDrag))
-                                lastTapTime = 0
+                    var totalDrag = Offset.Zero
+                    var loop = true
+                    while (loop) {
+                        val event = awaitPointerEvent()
+                        val dragChange = event.changes.firstOrNull { it.id == down.id }
+
+                        if (dragChange == null) {
+                            longPressJob.cancel()
+                            if (dragStarted) onDragCancel()
+                            break
+                        }
+
+
+                        if (dragChange.pressed) {
+                            val positionChange = dragChange.positionChange()
+                            totalDrag += positionChange
+
+                            if (longPressFired) {
+                                if (!dragStarted) {
+                                    if (totalDrag.getDistance() > viewConfiguration.touchSlop) {
+                                        onDragStart()
+                                        dragStarted = true
+                                        gestureHandled = true
+                                    }
+                                }
+                                if (dragStarted) {
+                                    onDrag(dragChange, positionChange)
+                                    dragChange.consume()
+                                }
                             } else {
-                                // Tap or Double Tap
-                                val currentTime = System.currentTimeMillis()
-                                if (currentTime - lastTapTime < doubleTapTimeout) {
-                                    pendingTapJob?.cancel()
-                                    onDoubleTap()
-                                    lastTapTime = 0
+                                if (totalDrag.getDistance() > viewConfiguration.touchSlop) {
+                                    longPressJob.cancel()
+                                    dragChange.consume()
+                                }
+                            }
+                        } else { // UP event
+                            longPressJob.cancel()
+                            loop = false
+
+                            if (dragStarted) {
+                                onDragEnd()
+                            } else if (!longPressFired) {
+                                if (totalDrag.getDistance() > swipeThreshold) {
+                                    if (onSwipe(getSwipeDirection(totalDrag))) {
+                                        gestureState.lastTapTime = 0
+                                        gestureHandled = true
+                                    }
                                 } else {
-                                    lastTapTime = currentTime
-                                    pendingTapJob = launch {
-                                        delay(doubleTapTimeout)
-                                        onTap()
+                                    val currentTime = System.currentTimeMillis()
+                                    if (currentTime - gestureState.lastTapTime < doubleTapTimeout) {
+                                        gestureState.pendingTapJob?.cancel()
+                                        if (onDoubleTap()) {
+                                            gestureHandled = true
+                                        }
+                                        gestureState.lastTapTime = 0
+                                    } else {
+                                        gestureState.lastTapTime = currentTime
+                                        gestureState.pendingTapJob = scope.launch {
+                                            delay(doubleTapTimeout)
+                                            onTap()
+                                        }
+                                        gestureHandled = true
                                     }
                                 }
                             }
-                        }
 
-                        event.changes.forEach { if (it.pressed.not()) it.consume() }
-                        gestureConsumed = true
+                            if (gestureHandled) {
+                                down.consume()
+                                dragChange.consume()
+                            }
+                        }
                     }
                 }
             }
