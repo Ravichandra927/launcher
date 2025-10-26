@@ -26,7 +26,6 @@ sealed class GestureAction {
 
 @Serializable
 data class GestureConfig(
-    val packageName: String,
     val gesture: GestureDirection,
     val action: GestureAction
 )

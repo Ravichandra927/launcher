@@ -24,6 +24,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNames
 import java.io.File
 import java.util.UUID
 
@@ -46,6 +47,8 @@ data class FolderInfo(
 )
 
 class LauncherViewModel : ViewModel() {
+    private val json = Json { ignoreUnknownKeys = true }
+
     private val _items = MutableStateFlow<List<LauncherItem>>(emptyList())
     val items: StateFlow<List<LauncherItem>> = _items.asStateFlow()
 
@@ -69,7 +72,11 @@ class LauncherViewModel : ViewModel() {
     var draggedAppFromFolder by mutableStateOf<Pair<AppInfo, FolderInfo>?>(null)
         private set
 
-    private var gestureConfigs = mutableMapOf<String, GestureConfig>()
+    var folderToRename by mutableStateOf<FolderInfo?>(null)
+        private set
+
+    private val _gestureConfigs = MutableStateFlow<Map<String, GestureConfig>>(emptyMap())
+    val gestureConfigs: StateFlow<Map<String, GestureConfig>> = _gestureConfigs.asStateFlow()
 
     fun loadApps(context: Context) {
         viewModelScope.launch {
@@ -86,7 +93,7 @@ class LauncherViewModel : ViewModel() {
                 _allApps.value = allAppInfo
 
                 loadItems(context, allAppInfo)
-                loadGestureConfigs(context)
+                refreshGestureConfigs(context) // Call refresh here to ensure gestures are loaded
                 loadAllShortcuts(context, allAppInfo)
             }
         }
@@ -95,8 +102,8 @@ class LauncherViewModel : ViewModel() {
     private fun loadItems(context: Context, allAppInfo: List<AppInfo>) {
         val file = File(context.filesDir, "items.json")
         if (file.exists()) {
-            val json = file.readText()
-            val loadedItems = Json.decodeFromString<List<LauncherItemSerializable>>(json)
+            val jsonText = file.readText()
+            val loadedItems = json.decodeFromString<ItemsWrapper>(jsonText).items
             _items.value = loadedItems.mapNotNull { item ->
                 when (item.type) {
                     "app" -> allAppInfo.find { it.packageName == item.packageName }
@@ -145,8 +152,9 @@ class LauncherViewModel : ViewModel() {
                         )
                     }
                 }
-                val json = Json.encodeToString(serializableItems)
-                File(context.filesDir, "items.json").writeText(json)
+                val wrapper = ItemsWrapper(serializableItems)
+                val jsonText = json.encodeToString(wrapper)
+                File(context.filesDir, "items.json").writeText(jsonText)
             }
         }
     }
@@ -194,7 +202,7 @@ class LauncherViewModel : ViewModel() {
         saveItems(context)
     }
 
-    fun showShortcuts(context: Context, appInfo: AppInfo) {
+    fun showShortcuts(context: Context, appInfo: AppInfo): Boolean {
         shortcuts.clear()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
             val launcherApps = context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
@@ -217,18 +225,21 @@ class LauncherViewModel : ViewModel() {
                     })
                 }
             } catch (e: SecurityException) {
-                // Handle exception
+                showShortcutsMenu = appInfo
+                return false
             }
         }
         showShortcutsMenu = appInfo
+        return true
     }
 
     fun hideShortcuts() {
         showShortcutsMenu = null
     }
 
-    fun showFolderMenu(folderInfo: FolderInfo) {
+    fun showFolderMenu(folderInfo: FolderInfo): Boolean {
         showFolderMenu = folderInfo.id
+        return true
     }
 
     fun hideFolderMenu() {
@@ -260,33 +271,50 @@ class LauncherViewModel : ViewModel() {
         showGestureConfig = null
     }
 
-    private fun loadGestureConfigs(context: Context) {
+    private fun refreshGestureConfigs(context: Context) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 val file = File(context.filesDir, "gestures.json")
                 if (file.exists()) {
-                    val json = file.readText()
-                    gestureConfigs = Json.decodeFromString<MutableMap<String, GestureConfig>>(json)
+                    val jsonText = file.readText()
+                    _gestureConfigs.value = json.decodeFromString<Map<String, GestureConfig>>(jsonText)
+                } else {
+                    _gestureConfigs.value = emptyMap()
                 }
             }
         }
     }
 
-    fun saveGestureConfigs(context: Context) {
+    private fun saveGestureConfigs(context: Context) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                val json = Json.encodeToString(gestureConfigs)
-                File(context.filesDir, "gestures.json").writeText(json)
+                val jsonText = json.encodeToString(_gestureConfigs.value)
+                File(context.filesDir, "gestures.json").writeText(jsonText)
             }
         }
     }
 
     fun getGestureConfig(key: String): GestureConfig? {
-        return gestureConfigs[key]
+        return _gestureConfigs.value[key]
     }
 
-    fun setGestureConfig(key: String, packageName: String, gesture: GestureDirection, action: GestureAction) {
-        gestureConfigs[key] = GestureConfig(packageName, gesture, action)
+    fun setGestureConfig(context: Context, key: String, gesture: GestureDirection, action: GestureAction?) {
+        val newConfigs = _gestureConfigs.value.toMutableMap()
+        if (action != null) {
+            newConfigs[key] = GestureConfig(gesture, action)
+        } else {
+            newConfigs.remove(key)
+        }
+        _gestureConfigs.value = newConfigs
+        saveGestureConfigs(context)
+    }
+
+    fun clearAllGestures(context: Context, keyPrefix: String) {
+        val newConfigs = _gestureConfigs.value.toMutableMap()
+        val keysToRemove = newConfigs.keys.filter { it.startsWith(keyPrefix) }
+        keysToRemove.forEach { newConfigs.remove(it) }
+        _gestureConfigs.value = newConfigs
+        saveGestureConfigs(context)
     }
 
     private fun loadAllShortcuts(context: Context, allApps: List<AppInfo>) {
@@ -325,6 +353,27 @@ class LauncherViewModel : ViewModel() {
 
     fun endDragFromFolder() {
         draggedAppFromFolder = null
+    }
+
+    fun reorderAppInFolder(context: Context, folderId: String, fromIndex: Int, toIndex: Int) {
+        val currentList = _items.value.toMutableList()
+        val folderIndex = currentList.indexOfFirst { it is LauncherItem.Folder && it.folderInfo.id == folderId }
+
+        if (folderIndex != -1) {
+            val oldFolderItem = currentList[folderIndex] as LauncherItem.Folder
+            val updatedApps = oldFolderItem.folderInfo.apps.toMutableList()
+            if (fromIndex >= 0 && fromIndex < updatedApps.size && fromIndex != toIndex) {
+                val appToMove = updatedApps.removeAt(fromIndex)
+                val newToIndex = if (toIndex > fromIndex) toIndex - 1 else toIndex
+                if (newToIndex >= 0 && newToIndex <= updatedApps.size) {
+                    updatedApps.add(newToIndex, appToMove)
+                    val newFolderInfo = oldFolderItem.folderInfo.copy(apps = updatedApps)
+                    currentList[folderIndex] = LauncherItem.Folder(newFolderInfo)
+                    _items.value = currentList.toImmutableList()
+                    saveItems(context)
+                }
+            }
+        }
     }
 
     fun moveAppFromFolderToHome(context: Context, appToMove: AppInfo, fromFolder: FolderInfo, targetIndex: Int) {
@@ -402,33 +451,59 @@ class LauncherViewModel : ViewModel() {
         saveItems(context)
     }
 
-    fun performFolderGesture(context: Context, folderInfo: FolderInfo, gesture: GestureDirection) {
+    fun performFolderGesture(context: Context, folderInfo: FolderInfo, gesture: GestureDirection): Boolean {
         if (folderInfo.gestureMode == GestureMode.DEFAULT) {
-            val appToLaunch = when (gesture) {
-                GestureDirection.UP_LEFT -> folderInfo.apps.getOrNull(0)
-                GestureDirection.UP -> folderInfo.apps.getOrNull(1)
-                GestureDirection.UP_RIGHT -> folderInfo.apps.getOrNull(2)
-                GestureDirection.LEFT -> folderInfo.apps.getOrNull(3)
-                GestureDirection.DOUBLE_TAP -> folderInfo.apps.getOrNull(4)
-                GestureDirection.RIGHT -> folderInfo.apps.getOrNull(5)
-                GestureDirection.DOWN_LEFT -> folderInfo.apps.getOrNull(6)
-                GestureDirection.DOWN -> folderInfo.apps.getOrNull(7)
-                GestureDirection.DOWN_RIGHT -> folderInfo.apps.getOrNull(8)
-                GestureDirection.SINGLE_TAP -> {
-                    return
+            val appToLaunch = if (folderInfo.apps.size <= 4) {
+                when (gesture) {
+                    GestureDirection.UP_LEFT -> folderInfo.apps.getOrNull(0)
+                    GestureDirection.UP_RIGHT -> folderInfo.apps.getOrNull(1)
+                    GestureDirection.DOWN_LEFT -> folderInfo.apps.getOrNull(2)
+                    GestureDirection.DOWN_RIGHT -> folderInfo.apps.getOrNull(3)
+                    GestureDirection.DOUBLE_TAP -> null // Explicitly do nothing for double tap in default mode if <= 4 apps
+                    else -> null
+                }
+            } else {
+                when (gesture) {
+                    GestureDirection.UP_LEFT -> folderInfo.apps.getOrNull(0)
+                    GestureDirection.UP -> folderInfo.apps.getOrNull(1)
+                    GestureDirection.UP_RIGHT -> folderInfo.apps.getOrNull(2)
+                    GestureDirection.LEFT -> folderInfo.apps.getOrNull(3)
+                    GestureDirection.DOUBLE_TAP -> folderInfo.apps.getOrNull(4)
+                    GestureDirection.RIGHT -> folderInfo.apps.getOrNull(5)
+                    GestureDirection.DOWN_LEFT -> folderInfo.apps.getOrNull(6)
+                    GestureDirection.DOWN -> folderInfo.apps.getOrNull(7)
+                    GestureDirection.DOWN_RIGHT -> folderInfo.apps.getOrNull(8)
+                    else -> null
                 }
             }
 
             appToLaunch?.let {
                 val launchIntent = context.packageManager.getLaunchIntentForPackage(it.packageName)
                 context.startActivity(launchIntent)
+                return true
             }
         } else {
             val key = "folder:${folderInfo.id}:${gesture.name}"
             val config = getGestureConfig(key)
             config?.action?.let { action ->
                 executeGestureAction(context, action)
+                return true
             }
+        }
+        return false
+    }
+
+    fun hasCustomGestures(appInfo: AppInfo, folderInfo: FolderInfo?, indexInFolder: Int?): Boolean {
+        val gestures = GestureDirection.entries.filter { it != GestureDirection.SINGLE_TAP }
+        return gestures.any { gesture ->
+            val key = if (folderInfo != null && indexInFolder != null) {
+                "folder:${folderInfo.id}:$indexInFolder:${gesture.name}"
+            } else if (folderInfo != null) {
+                "folder:${folderInfo.id}:${gesture.name}"
+            } else {
+                "app:${appInfo.packageName}:${gesture.name}"
+            }
+            _gestureConfigs.value.containsKey(key)
         }
     }
 
@@ -445,6 +520,11 @@ class LauncherViewModel : ViewModel() {
                     val shortcutQuery = LauncherApps.ShortcutQuery()
                         .setPackage(action.packageName)
                         .setShortcutIds(listOf(action.shortcutId))
+                        .setQueryFlags(
+                            LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC
+                                    or LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST
+                                    or LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
+                        )
                     val shortcuts =
                         launcherApps.getShortcuts(shortcutQuery, android.os.Process.myUserHandle())
                     if (shortcuts != null && shortcuts.isNotEmpty()) {
@@ -455,13 +535,37 @@ class LauncherViewModel : ViewModel() {
         }
     }
 
+    fun updateFolderName(context: Context, folderId: String, newName: String) {
+        val currentList = _items.value.toMutableList()
+        val folderIndex = currentList.indexOfFirst { it is LauncherItem.Folder && it.folderInfo.id == folderId }
+        if (folderIndex != -1) {
+            val oldFolderItem = currentList[folderIndex] as LauncherItem.Folder
+            val newFolderInfo = oldFolderItem.folderInfo.copy(name = newName)
+            currentList[folderIndex] = LauncherItem.Folder(newFolderInfo)
+            _items.value = currentList.toImmutableList()
+            saveItems(context)
+        }
+    }
+
+    fun startRenameFolder(folderInfo: FolderInfo) {
+        folderToRename = folderInfo
+    }
+
+    fun finishRenameFolder() {
+        folderToRename = null
+    }
+
     @Serializable
     private data class LauncherItemSerializable(
         val type: String,
         val packageName: String? = null,
         val id: String? = null,
         val name: String? = null,
+        @JsonNames("appPackages")
         val apps: List<String>? = null,
         val gestureMode: GestureMode? = null
     )
+
+    @Serializable
+    private data class ItemsWrapper(val items: List<LauncherItemSerializable>)
 }
