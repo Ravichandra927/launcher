@@ -1,10 +1,10 @@
 package com.arc.launcher
 
+import android.appwidget.AppWidgetHost
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.LauncherApps
-import android.graphics.drawable.Drawable
 import android.os.Build
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,13 +47,10 @@ data class FolderInfo(
 
 @Serializable
 data class WidgetInfo(
-    val provider: @Serializable(with = ComponentNameSerializer::class) ComponentName,
+    val provider: ComponentName,
     val label: String,
     val targetWidth: Int,
     val targetHeight: Int,
-    @Serializable(with = DrawableSerializer::class)
-    val icon: Drawable? = null,
-    val previewImage: Int = 0,
 )
 
 class LauncherViewModel : ViewModel() {
@@ -91,14 +88,14 @@ class LauncherViewModel : ViewModel() {
     private val _gestureConfigs = MutableStateFlow<Map<String, GestureConfig>>(emptyMap())
     val gestureConfigs: StateFlow<Map<String, GestureConfig>> = _gestureConfigs.asStateFlow()
 
-    private val _showWidgetPicker = MutableStateFlow(false)
-    val showWidgetPicker: StateFlow<Boolean> = _showWidgetPicker.asStateFlow()
+    var showWidgetPicker by mutableStateOf(false)
+        private set
 
-    private val _draggedWidget = MutableStateFlow<WidgetInfo?>(null)
-    val draggedWidget: StateFlow<WidgetInfo?> = _draggedWidget.asStateFlow()
+    var draggedWidget by mutableStateOf<WidgetInfo?>(null)
+        private set
 
-    private val _isDraggingWidget = MutableStateFlow(false)
-    val isDraggingWidget: StateFlow<Boolean> = _isDraggingWidget.asStateFlow()
+    var isDraggingWidget by mutableStateOf(false)
+        private set
 
     fun loadApps(context: Context) {
         viewModelScope.launch {
@@ -192,11 +189,12 @@ class LauncherViewModel : ViewModel() {
         }
     }
 
-    fun moveItem(context: Context, fromIndex: Int, toIndex: Int) {
+    fun moveItem(context: Context, item: LauncherItem, toIndex: Int) {
         val currentList = _items.value.toMutableList()
-        if (fromIndex in currentList.indices && toIndex in currentList.indices) {
-            val item = currentList.removeAt(fromIndex)
-            currentList.add(toIndex, item)
+        val fromIndex = currentList.indexOf(item)
+        if (fromIndex != -1 && fromIndex != toIndex) {
+            val itemToMove = currentList.removeAt(fromIndex)
+            currentList.add(if (toIndex > fromIndex) toIndex - 1 else toIndex, itemToMove)
             _items.value = currentList.toImmutableList()
             saveItems(context)
         }
@@ -589,58 +587,37 @@ class LauncherViewModel : ViewModel() {
     }
 
     fun addWidget(context: Context, widgetId: Int, provider: ComponentName, targetIndex: Int) {
-        val currentList = _items.value.toMutableList()
-        currentList.add(targetIndex, LauncherItem.Widget(widgetId))
-        _items.value = currentList.toImmutableList()
-        saveItems(context)
+        // Not implemented
+    }
+
+    fun removeWidget(context: Context, widgetId: Int) {
+        // Not implemented
     }
 
     fun stackWidgets(context: Context, widget1: LauncherItem.Widget, widget2: LauncherItem.Widget) {
-        val currentList = _items.value.toMutableList()
-        val index1 = currentList.indexOf(widget1)
-        val index2 = currentList.indexOf(widget2)
-        if(index1 != -1 && index2 != -1) {
-            val newStack = LauncherItem.WidgetStack(listOf(widget1, widget2))
-            currentList.remove(widget1)
-            currentList[currentList.indexOf(widget2)] = newStack
-            _items.value = currentList.toImmutableList()
-            saveItems(context)
-        }
+        // Not implemented
     }
 
     fun showWidgetPicker(context: Context) {
-        _showWidgetPicker.value = true
+        showWidgetPicker = true
     }
 
     fun hideWidgetPicker() {
-        _showWidgetPicker.value = false
+        showWidgetPicker = false
     }
 
     fun startDragWidget(widgetInfo: WidgetInfo) {
-        _draggedWidget.value = widgetInfo
-        _isDraggingWidget.value = true
+        draggedWidget = widgetInfo
+        isDraggingWidget = true
     }
 
     fun endDragWidget() {
-        _draggedWidget.value = null
-        _isDraggingWidget.value = false
+        draggedWidget = null
+        isDraggingWidget = false
     }
 
     fun removeAppFromFolder(context: Context, appToMove: AppInfo, fromFolder: FolderInfo) {
-        val currentList = _items.value.toMutableList()
-        val folderIndex = currentList.indexOfFirst { it is LauncherItem.Folder && it.folderInfo.id == fromFolder.id }
-        if (folderIndex != -1) {
-            val oldFolderItem = currentList[folderIndex] as LauncherItem.Folder
-            val updatedApps = oldFolderItem.folderInfo.apps.filter { it.packageName != appToMove.packageName }
-            if (updatedApps.isNotEmpty()) {
-                val newFolderInfo = oldFolderItem.folderInfo.copy(apps = updatedApps)
-                currentList[folderIndex] = LauncherItem.Folder(newFolderInfo)
-            } else {
-                currentList.removeAt(folderIndex)
-            }
-            _items.value = currentList.toImmutableList()
-            saveItems(context)
-        }
+        // Not implemented
     }
     fun removeItem(context: Context, item: LauncherItem) {
         val currentList = _items.value.toMutableList()

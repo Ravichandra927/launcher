@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 enum class GestureDirection(val description: String) {
+    DOUBLE_TAP("Double Tap"),
     UP("Swipe Up"),
     DOWN("Swipe Down"),
     LEFT("Swipe Left"),
@@ -12,8 +13,7 @@ enum class GestureDirection(val description: String) {
     UP_RIGHT("Swipe Up-Right"),
     DOWN_LEFT("Swipe Down-Left"),
     DOWN_RIGHT("Swipe Down-Right"),
-    SINGLE_TAP("Single Tap"),
-    DOUBLE_TAP("Double Tap")
+    SINGLE_TAP("Single Tap")
 }
 
 @Serializable
